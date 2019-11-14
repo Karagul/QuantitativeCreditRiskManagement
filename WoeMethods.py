@@ -46,6 +46,8 @@ class woe_methods_funcs(object):
 
         return chis
 
+    def _llt_cap_func(x, s, b):
+        return max(s, min(x, b))
 
     def tree_bins_func(max_grps = 5, pct_size = 0.05):
         tmp = self.raw.copy().dropna()
@@ -67,6 +69,7 @@ class woe_methods_funcs(object):
         cuts = list(grp_info[ft_name]) + [df[ft_name].max()+1]
 
         self.tree_bins = {ft_name:cuts}
+        self.cap_info = {'max':}
 
     def freq_bins_funcs(grps = 10, pct_size = 0.05):
         tmp = self.raw.copy().dropna()
@@ -121,22 +124,29 @@ class woe_methods_funcs(object):
 
         self.chiq_bins = {ft_name:cuts}
 
-    def woe_apply(ifiv = False):
+    def woe_apply(data = None, ifiv = False, ifnan = True, methods = 'tree', code = True):
+        if data is None:
+            data = self.raw.copy()
+
         if methods == 'tree':
             bins = self.tree_bins
+            cap_info = self.cap_info
         elif methods == 'chiq':
             bins = self.chiq_bins
+            cap_info = self.cap_info
         elif methods == 'freq':
             bins = self.freq_bins
+            cap_info = self.cap_info
         else:
             raise ValueError('Invalid Input Methods')
 
-        tmp = self.raw.copy().dropna()
+        tmp = data.dropna()
         ft_name, _ = tmp.columns.values
+        tmp[ft_name] = tmp[ft_name].apply(self._llt_cap_func, (cap_info['min'], cap_info['max']))
         tmp['grp'] = pd.cut(tmp[ft_name], bins = bins, right = False)
         stat = tmp[['grp', 'label']].groupby('grp', as_index = False).agg({'label':['sum', 'count']})
         if ifnan:
-            rlts = list(stat.values) + [['nan', self.raw[self.raw[ft_name].isna()]['label'].sum(), len(self.raw[self.raw[ft_name].isna()])]]
+            rlts = list(stat.values) + [['nan', data[data[ft_name].isna()]['label'].sum(), len(data[data[ft_name].isna()])]]
         else:
             rlts = stat
         woe = pd.DataFrame(rlts, columns = [ft_name, 'bad', 'size'])
