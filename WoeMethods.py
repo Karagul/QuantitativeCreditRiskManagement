@@ -122,4 +122,31 @@ class woe_methods_funcs(object):
         self.chiq_bins = {ft_name:cuts}
 
     def woe_apply(ifiv = False):
-        pass
+        if methods == 'tree':
+            bins = self.tree_bins
+        elif methods == 'chiq':
+            bins = self.chiq_bins
+        elif methods == 'freq':
+            bins = self.freq_bins
+        else:
+            raise ValueError('Invalid Input Methods')
+
+        tmp = self.raw.copy().dropna()
+        ft_name, _ = tmp.columns.values
+        tmp['grp'] = pd.cut(tmp[ft_name], bins = bins, right = False)
+        stat = tmp[['grp', 'label']].groupby('grp', as_index = False).agg({'label':['sum', 'count']})
+        if ifnan:
+            rlts = list(stat.values) + [['nan', self.raw[self.raw[ft_name].isna()]['label'].sum(), len(self.raw[self.raw[ft_name].isna()])]]
+        else:
+            rlts = stat
+        woe = pd.DataFrame(rlts, columns = [ft_name, 'bad', 'size'])
+
+        woe['good'] = woe['size'] - woe['bad']
+        woe['woe'] = ((woe['bad']/bad)/(woe['good']/good)).apply(np.int)
+        woe['iv'] = (woe['bad']/bad - woe['good']/good) * woe['woe']
+        woe['bad_pct'] = woe['bad']/woe['size']
+
+        if ifiv == True:
+            return woe['iv'].sum()
+        else:
+            return woe
