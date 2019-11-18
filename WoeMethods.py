@@ -253,4 +253,5 @@ class woe_methods_funcs(object):
 
         self.data = data
 
-        
+    def func_save():
+        pass
