@@ -24,7 +24,9 @@ class woe_methods_funcs(object):
         self.tree_bins = None
         self.freq_bins = None
         self.chiq_bins = None
-        pass
+        self.mono_bins = None
+        self.all_woe_info = {}
+        self.all_woe_mono_info = {}
 
     def _chi_cal_func(data):
         names = list(data.columns.values)
@@ -49,6 +51,20 @@ class woe_methods_funcs(object):
     def _llt_cap_func(x, s, b):
         return max(s, min(x, b))
 
+    def _bins_merge_chiq(tgt, cuts):
+        df = tgt.copy().dropna()
+        ft_name, _ = df.columns.values
+
+        df['grp'] = pd.cut(df[ft_name], bins = cuts, index = range(len(cuts)-1), right = False)
+        chis = self._chi_cal_func(df)
+
+        while len(set([chis[i] < chis[i+1] for i in range(len(chis))]))>1:
+            lct = chis.index(max(chis))
+            cuts.remove(cuts[lct+1])
+            chis = self._chi_cal_func(df)
+
+        return cuts
+
     def tree_bins_func(max_grps = 5, pct_size = 0.05):
         tmp = self.raw.copy().dropna()
         smp_size = np.int(len(tmp)*pct_size)+1
@@ -69,7 +85,7 @@ class woe_methods_funcs(object):
         cuts = list(grp_info[ft_name]) + [df[ft_name].max()+1]
 
         self.tree_bins = {ft_name:cuts}
-        self.cap_info = {'max':}
+        self.cap_info = {'max': tmp[ft_name].max(), 'min':tmp[ft_name].min()}
 
     def freq_bins_funcs(grps = 10, pct_size = 0.05):
         tmp = self.raw.copy().dropna()
@@ -104,7 +120,7 @@ class woe_methods_funcs(object):
 
         self.freq_bins = {ft_name:rlts+[max(prm_cuts)]}
 
-    def chiq_bins_func(grps = 20, pct_size = 0.03, pv = 0.05):
+    def chiq_bins_func(grps = 20, cuts = None, pct_size = 0.03, pv = 0.05):
         tmp = self.raw.copy().dropna()
         ft_name, _ = tmp.columns.values
 
@@ -115,7 +131,7 @@ class woe_methods_funcs(object):
         chis = self._chi_cal_func(tmp)
         while max(chis) > pv:
             tgt = chis.index(max(chis))
-            cuts.remove(cuts[tgt])
+            cuts.remove(cuts[tgt+1])
             if len(cuts)<=2:
                 break
             else:
@@ -124,7 +140,7 @@ class woe_methods_funcs(object):
 
         self.chiq_bins = {ft_name:cuts}
 
-    def woe_apply(data = None, ifiv = False, ifnan = True, methods = 'tree', code = True):
+    def woe_cal(data = None, ifiv = False, ifnan = True, methods = 'tree', code = True):
         if data is None:
             data = self.raw.copy()
 
@@ -156,7 +172,85 @@ class woe_methods_funcs(object):
         woe['iv'] = (woe['bad']/bad - woe['good']/good) * woe['woe']
         woe['bad_pct'] = woe['bad']/woe['size']
 
+        tmp_dict = {}
+        for i in woe[ft_name].values:
+            tmp_dict[i] = woe[woe[ft_name]==i].loc[0]['woe']
+        self.all_woe_info[ft_name] = tmp_dict
+
         if ifiv == True:
             return woe['iv'].sum()
         else:
             return woe
+
+    def woe_mono_cal(data = None, ifiv = False, ifnan = True, methods = 'tree', code = True):
+        if data is None:
+            data = self.raw.copy()
+
+        if methods == 'tree':
+            bins = self.tree_bins_func
+            cap_info = self.cap_info
+        elif methods == 'chiq':
+            bins = self.chiq_bins
+            cap_info = self.cap_info
+        elif methods == 'freq':
+            bins = self.freq_bins
+            cap_info = self.cap_info
+        else:
+            raise ValueError('Invalid Input Methods')
+
+        tmp = data.dropna()
+        ft_name, _ = tmp.columns.values
+        tmp[ft_name] = tmp[ft_name].apply(self._llt_cap_func, (cap_info['min'], cap_info['max']))
+        cuts = self._bins_merge_chiq(tmp, bins)
+        self.mono_bins = {ft_name:cuts}
+        tmp['grp'] = pd.cut(tmp[ft_name], bins = cuts, right = False)
+        stat = tmp[['grp', 'label']].groupby('grp', as_index = False).agg({'label':['sum', 'count']})
+        if ifnan:
+            rlts = list(stat.values) + [['nan', data[data[ft_name].isna()]['label'].sum(), len(data[data[ft_name].isna()])]]
+        else:
+            rlts = stat
+        woe = pd.DataFrame(rlts, columns = [ft_name, 'bad', 'size'])
+
+        woe['good'] = woe['size'] - woe['bad']
+        woe['woe'] = ((woe['bad']/bad)/(woe['good']/good)).apply(np.int)
+        woe['iv'] = (woe['bad']/bad - woe['good']/good) * woe['woe']
+        woe['bad_pct'] = woe['bad']/woe['size']
+
+        tmp_dict = {}
+        for i in woe[ft_name].values:
+            tmp_dict[i] = woe[woe[ft_name]==i].loc[0]['woe']
+        self.all_woe_mono_info[ft_name] = tmp_dict
+
+        if ifiv == True:
+            return woe['iv'].sum()
+        else:
+            return woe
+
+    def woe_apply(data = None, cuts = None, woe_info = None, mothed = 'mono', ifna = True):
+        if data is None:
+            data = self.raw.copy()
+
+        if ifna:
+            data = data.dropna()
+
+        ft_name, _ = data.columns.values
+        if method == 'mono':
+            cuts = self.mono_bins
+            woe_info = self.all_woe_mono_info[ft_name]
+        elif method == 'tree':
+            cuts = self.tree_bins
+            woe_info = self.all_woe_info[ft_name]
+        elif method == 'chiq':
+            cuts = self.chiq_bins
+            woe_info = self.all_woe_info[ft_name]
+        elif method == 'freq':
+            cuts = self.freq_bins
+            woe_info = self.all_woe_info[ft_name]
+
+        data['grp'] = pd.cuts(data[ft_name], bins = cuts, right = False)
+        data['grp'] = data['grp'].fillna('nan')
+        data['woe_code'] = data['grp'].apply(lambda x: woe_info[x])
+
+        self.data = data
+
+        
