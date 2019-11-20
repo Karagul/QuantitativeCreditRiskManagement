@@ -20,6 +20,9 @@ from sklearn import preprocesssing
 
 class woe_methods_funcs(object):
     def __init__(df):
+        """
+        单因子的WOE处理方法，包含三种分享方式，WOE编码的具体防范
+        """
         self.raw = df
         self.tree_bins = None
         self.freq_bins = None
@@ -29,6 +32,9 @@ class woe_methods_funcs(object):
         self.all_woe_mono_info = {}
 
     def _chi_cal_func(data):
+        """
+        所有相邻分组直接的卡方计算
+        """
         names = list(data.columns.values)
         names.remove('grp')
         names.remove('label')
@@ -49,9 +55,17 @@ class woe_methods_funcs(object):
         return chis
 
     def _llt_cap_func(x, s, b):
+        """
+        极值的处理函数
+        """
         return max(s, min(x, b))
 
     def _bins_merge_chiq(tgt, cuts):
+        """
+        基于卡方的单调性保证：
+        1.当分组的单调性不满足的时候，优先合并chiq检验最不显著的分醉；
+        2.重复以上步骤
+        """
         df = tgt.copy().dropna()
         ft_name, _ = df.columns.values
 
@@ -66,6 +80,11 @@ class woe_methods_funcs(object):
         return cuts
 
     def tree_bins_func(max_grps = 5, pct_size = 0.05):
+        """
+        基于决策树（信息熵）的分组
+        1.max_grps控制最大分组的个数；
+        2.pct_size控制每组最低的样本占比
+        """
         tmp = self.raw.copy().dropna()
         smp_size = np.int(len(tmp)*pct_size)+1
 
@@ -88,6 +107,11 @@ class woe_methods_funcs(object):
         self.cap_info = {'max': tmp[ft_name].max(), 'min':tmp[ft_name].min()}
 
     def freq_bins_funcs(grps = 10, pct_size = 0.05):
+        """
+        基于频率的分组方式：
+        1.grps控制分组的个数；
+        2.pct_size控制最小分组的最小可行比例
+        """
         tmp = self.raw.copy().dropna()
         pct_size = min(pct_size, 1.0/grps/1.5)
 
@@ -121,6 +145,13 @@ class woe_methods_funcs(object):
         self.freq_bins = {ft_name:rlts+[max(prm_cuts)]}
 
     def chiq_bins_func(grps = 20, cuts = None, pct_size = 0.03, pv = 0.05):
+        """
+        通过chiq进行的分箱，先用频率分箱的方式分出较多组，后续迎chiq的方式进行合并
+        1.grps控制初始频率分箱的组数；
+        2.cuts可以指定初始分箱方式；
+        3.pct_size控制最小分组样本占整体的最小比例；
+        4.pv控制是否合并分箱的阈值
+        """
         tmp = self.raw.copy().dropna()
         ft_name, _ = tmp.columns.values
 
@@ -141,6 +172,14 @@ class woe_methods_funcs(object):
         self.chiq_bins = {ft_name:cuts}
 
     def woe_cal(data = None, ifiv = False, ifnan = True, methods = 'tree', code = True):
+        """
+        计算特征的IV值及相应分箱的WOE编码
+        1.data：意味着可以传输外部数据进行计算；
+        2.ifiv: 控制是否返回最终的IV值；
+        3.ifnan: 控制是否进行空值处理；
+        4.methods: 控制分箱方法，只有‘tree’， ‘chiq’， ‘freq’三种可选；
+        5.code：保留
+        """
         if data is None:
             data = self.raw.copy()
 
@@ -183,6 +222,14 @@ class woe_methods_funcs(object):
             return woe
 
     def woe_mono_cal(data = None, ifiv = False, ifnan = True, methods = 'tree', code = True):
+        """
+        计算特征的IV值及相应分箱的WOE编码，保证分箱单调性
+        1.data：意味着可以传输外部数据进行计算；
+        2.ifiv: 控制是否返回最终的IV值；
+        3.ifnan: 控制是否进行空值处理；
+        4.methods: 控制分箱方法，只有‘tree’， ‘chiq’， ‘freq’三种可选；
+        5.code：保留
+        """
         if data is None:
             data = self.raw.copy()
 
@@ -227,6 +274,9 @@ class woe_methods_funcs(object):
             return woe
 
     def woe_apply(data = None, cuts = None, woe_info = None, mothed = 'mono', ifna = True):
+        """
+        用WOE编码替换分组信息
+        """
         if data is None:
             data = self.raw.copy()
 
@@ -253,5 +303,5 @@ class woe_methods_funcs(object):
 
         self.data = data
 
-    def func_save():
+    def func_pos_save():
         pass
