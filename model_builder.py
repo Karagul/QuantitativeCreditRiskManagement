@@ -9,14 +9,14 @@ Created on Mon May 13 00:34:49 2019
 import pandas as pd
 import numpy as np
 
-#import xgboost as xgb
+import xgboost as xgb
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn import metrics
 from sklearn.externals import joblib
 
 import statsmodels.api as sm
 
-import data_test as funcs
+import FeatureStatTools as funcs
 
 params = {
 #'booster':'gbtree',
@@ -123,6 +123,20 @@ def xgb_model(train, test, params = params, rounds = 500):
 
     return feat_imp, score_test, score_train, df, df_train
 
+def xgb_model_forselection(train, test, params = params, rounds = 500, early_stopping_rounds = 200):
+    train_y = train['label']
+    train_x = train.drop('label', axis = 1)
+    test_y = test['label']
+    test_x = test.drop('label', axis = 1)
+
+    dtrain = xgb.DMatrix(train_x, label = train_y, missing = np.nan)
+    dtest  = xgb.DMatrix(test_x, label = test_y, missing = np.nan)
+
+    watchlist = [(dtrain, 'train'), (dtest, 'eval')]
+    model = xgb.train(params, dtrain, rounds, watchlist, early_stopping_rounds = 200)
+    feat_imp = pd.DataFrame(model.get_fscore(), index = ['fscore']).T
+
+    return feat_imp
 
 def xgb_model_with_train(train, test, params = params, rounds = 500):
     train_y = train['label']

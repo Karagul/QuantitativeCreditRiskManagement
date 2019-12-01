@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,22 +17,104 @@ from sklearn.model_selection import train_test_split, cross_validation
 from sklearn.tree import DecisionTreeClassifier
 from sklearn import metrics
 from sklearn.model_selection import GridSearchCV
-from sklearn.externals import joblib
-from sklearn import preprocesssing
 
+import warning
 
-def mis_check(df):
-    ft_name = df.columns.values[0]
+from tools import *
 
-    mis = len(df.dropna())/np.float(len(df))
-    df['type'] = df[ft_name].apply(lambda x: isinstance(eval(x), int))
+def smp_valid_check(path, output, size_c = 1000):
+    """
+    check the validality of samples based on feature coverage
+    """
+    rlts = []
+    with open(path, 'r') as f:
+        rlts = [re.sub(r'[_ \t,| ]', ' ', a).split(' ').count('') for a in f.readlines()[1:]]
+        f.close()
 
-    if df['type'].mean() == 1.0:
-        v1 = len(df[df[ft_name].apply(eval)==1])/np.float(len(df))
-        v2 = len(df[df[ft_name].apply(eval)==1])/np.float(len(df))
-        return {'missing':mis, 'value1_pct':v1, 'value2_pct':v2}
+    df = pd.DataFrame([list(range(len(rlts))), rlts], index = ['line', 'mis_cnt']).T
+    df.to_csv(putput+'/smp_valid_check.csv')
+
+    return df
+
+def badSmpRm(path, output, alist):
+    line_cnt = -1
+    with open(path, 'r') as f:
+        with open(output, 'w') as w:
+            for i in f.readlines():
+                line_cnt += 1
+                if line_cnt in alist:
+                    continue
+                else:
+                    w.write(i)
+            w.close()
+        f.close()
+
+def ft_type_check(path, output, header = True, size_c = 1000):
+    fsize = os.path.getsize(pth)/1024**2
+    if fsize > size_c:
+        rlts = []
+        with open(path, 'r') as f:
+            txt = [re.sub(r'[_ \t,| ]', ' ', a).split(' ') for a in f.readlines()[:2000+np.int(header)]]
+            f.close()
+
+        hds = txt[0]
+        vls = txt[1:]
+        all_data = pd.DataFrame(vls, columns = hds)
     else:
-        return {'missing':mis, 'value1_pct':np.nan, 'value2_pct':np.nan}
+        if header:
+            all_data = pd.read_csv(path, sep = r'[_ \t,| ]', header = 0)
+        else:
+            all_data = pd.read_csv(path, sep = r'[_ \t,| ]')
+
+    if len(all_data.shape[2]) == 1:
+        warnings.warn("invalid parser probably"))
+    hds = list(all_data.columns.values)
+
+    rlts = {}
+    for i in hds:
+        try:
+            tmp = all_data[i].apply(np.int)
+            rlts[i] = {'type':'int', 'dist':len(all_data[i].unique())}
+        except:
+            try:
+                tmp = all_data[i].apply(np.float)
+                rlts[i] = {'type':'float', 'dist':len(all_data)}
+            except:
+                rlts[i] = {'type':'str', 'dist':len(all_data[i].unique)}
+
+    json_str = json.dumps(rlts, indent= 4, ensure_ascii= False)
+    if fsize > size_c:
+        nm = 'type_info_sample'
+    else:
+        nm = 'typ_info'
+    with open(output+'/+'nm+'.json', 'w', encoding= 'utf-8') as f:
+        f.write(json_str)
+        f.close()
+
+    return rlts
+
+def ft_mis_check(df, tp_info, output):
+    ft_names = df.columns.values[0]
+
+    vl_check = {}
+    for i in ft_names:
+        if tp_info[i]['type'] == 'int':
+            vl_check[i] = {'mis_rate':1-df[i].isna().mean(), '0': (df[i]==0).mean(), '1': (df[i]==1).mean()}
+        elif tp_info[i]['type'] == 'str':
+            tmp = tp_info[i].value_counts()
+            vl_check[i] = {'mis_rate':1-df[i].isna().mean(), tmp.index[0]:tmp.loc[0]/len(df[i]), tmp.index[1]:tmp.loc[1]/len(df[i])}
+        else:
+            vl_check[i] = {'mis_rate':1-df[i].isna().mean(), 'mean':df[i].mean(), 'std':df[i].std()}
+
+    json_str = json.dumps(vl_check, indent = 4, ensure_ascii = False)
+    with open(output+'/mis_check.json', 'w', encoding = 'utf-8') as f:
+        f.write(json_str)
+        f.close()
+
+    return vl_check
+
+def ft_corr(df):
+    return df.corr()
 
 def psi_cal_func(df1, df2, grps = 10):
     ft_name = df1.columns.values[0]
@@ -84,11 +168,8 @@ def ks_cal_func(df, grps=10, ascd = False):
     stat['bad_cumsum'] = stat['bad'].cumsum()
 
     stat['bad_pct'] = stat['bad_cnt']/stat['size']
-    stat['good_cumsum_pct'] = stat['good_cumsum']/df['label'].sum()
-    stat['bad_cumsum_pct'] = stat['bad_cumsum']/(len(df)-df['label'].sum())
+    stat['bad_cumsum_pct'] = stat['bad_cumsum']/df['label'].sum()
+    stat['good_cumsum_pct'] = stat['good_cumsum']/(len(df)-df['label'].sum())
 
     stat['ks'] = stat['bad_cumsum_pct'] - stat['good_cumsum_pct']
     return stat
-
-def ks_cal_func():
-    
