@@ -32,11 +32,14 @@ def smp_valid_check(path, output, size_c = 1000):
         f.close()
 
     df = pd.DataFrame([list(range(len(rlts))), rlts], index = ['line', 'mis_cnt']).T
-    df.to_csv(putput+'/smp_valid_check.csv')
+    df.to_csv(output+'/smp_valid_check.csv')
 
     return df
 
 def badSmpRm(path, output, alist):
+    """
+    delete invalid bad samples
+    """
     line_cnt = -1
     with open(path, 'r') as f:
         with open(output, 'w') as w:
@@ -50,8 +53,12 @@ def badSmpRm(path, output, alist):
         f.close()
 
 def ft_type_check(path, output, header = True, size_c = 1000):
+    """
+    检查样本特征种类
+    """
     fsize = os.path.getsize(pth)/1024**2
     if fsize > size_c:
+        warnings.warn('sample data is used to assess data type')
         rlts = []
         with open(path, 'r') as f:
             txt = [re.sub(r'[_ \t,| ]', ' ', a).split(' ') for a in f.readlines()[:2000+np.int(header)]]
@@ -62,9 +69,9 @@ def ft_type_check(path, output, header = True, size_c = 1000):
         all_data = pd.DataFrame(vls, columns = hds)
     else:
         if header:
-            all_data = pd.read_csv(path, sep = r'[_ \t,| ]', header = 0)
+            all_data = pd.read_csv(path, sep = r'[_ \t,| ]', header = 0, dtype = 'str')
         else:
-            all_data = pd.read_csv(path, sep = r'[_ \t,| ]')
+            all_data = pd.read_csv(path, sep = r'[_ \t,| ]', dtype = 'str')
 
     if len(all_data.shape[2]) == 1:
         warnings.warn("invalid parser probably"))
@@ -80,43 +87,54 @@ def ft_type_check(path, output, header = True, size_c = 1000):
                 tmp = all_data[i].apply(np.float)
                 rlts[i] = {'type':'float', 'dist':len(all_data)}
             except:
-                rlts[i] = {'type':'str', 'dist':len(all_data[i].unique)}
+                rlts[i] = {'type':'str', 'dist':len(all_data[i].unique())}
 
-    json_str = json.dumps(rlts, indent= 4, ensure_ascii= False)
     if fsize > size_c:
-        nm = 'type_info_sample'
+        nm = 'type_info_sample.json'
     else:
-        nm = 'typ_info'
-    with open(output+'/+'nm+'.json', 'w', encoding= 'utf-8') as f:
-        f.write(json_str)
-        f.close()
+        nm = 'typ_info.json'
+
+    putFile(output, nm, rlts)
 
     return rlts
 
-def ft_mis_check(df, tp_info, output):
-    ft_names = df.columns.values[0]
+#缺失及分布情况初步统计
+def ft_mis_check(df, tp):
+    """
+    计算缺失值及简单的分布情况
+    """
+    def sml_func(s, i):
+        try:
+            return s.index[i]
+        except:
+            return None
+    ft_name = df.columns.values[0]
 
-    vl_check = {}
-    for i in ft_names:
-        if tp_info[i]['type'] == 'int':
-            vl_check[i] = {'mis_rate':1-df[i].isna().mean(), '0': (df[i]==0).mean(), '1': (df[i]==1).mean()}
-        elif tp_info[i]['type'] == 'str':
-            tmp = tp_info[i].value_counts()
-            vl_check[i] = {'mis_rate':1-df[i].isna().mean(), tmp.index[0]:tmp.loc[0]/len(df[i]), tmp.index[1]:tmp.loc[1]/len(df[i])}
-        else:
-            vl_check[i] = {'mis_rate':1-df[i].isna().mean(), 'mean':df[i].mean(), 'std':df[i].std()}
+    if len(df[ft_name].dropna())
 
-    json_str = json.dumps(vl_check, indent = 4, ensure_ascii = False)
-    with open(output+'/mis_check.json', 'w', encoding = 'utf-8') as f:
-        f.write(json_str)
-        f.close()
+    if tp == 'int':
+        vl_check[i] = {'type': 'int', 'mis_rate':1-df[ft_name].isna().mean(), '0': (df[ft_name]==0).mean(), '1': (df[i]==1).mean()}
+    elif tp == 'str':
+        tmp = df[ft_name].value_counts()
+        vl_check[i] = {'type': 'str', 'mis_rate':1-df[i].isna().mean(), sml_func(tmp, 0):sml_func(tmp, 0)/len(df[i]), sml_func(tmp, 1):sml_func(tmp, 1)/len(df[i])}
+    else:
+        #tgt = df[ft_name].dropna()
+        bins = [df[ft_name].min() + i * np.float((df[ft_name].max()-df[ft_name].min()))/grps] + [df[ft_name].max()+1]
+        tgt = pd.cut(df[ft_name], bins = bins).value_counts()
+        vl_check[i] = {'type': 'float', 'mis_rate':1-df[i].isna().mean(), sml_func(tmp, 0):sml_func(tmp, 0)/len(df[i]), sml_func(tmp, 1):sml_func(tmp, 1)/len(df[i])}
 
     return vl_check
 
 def ft_corr(df):
+    """
+    计算相关性
+    """
     return df.corr()
 
 def psi_cal_func(df1, df2, grps = 10):
+    """
+    计算PSI
+    """
     ft_name = df1.columns.values[0]
 
     min_v = min(df1[ft_name].min(), df2[ft_name].min())
@@ -139,6 +157,10 @@ def psi_cal_func(df1, df2, grps = 10):
     return df['psi'].sum()
 
 def tvalue_cal_func(df, ifconst = True):
+    """
+    计算单因子T值：
+    ifconst:控制是否添加常数项
+    """
     ft_name, _ = df.columns.value
     #但因子检验的时候不考虑空值
     df = df.dropna()
@@ -152,6 +174,9 @@ def tvalue_cal_func(df, ifconst = True):
     return model.tvalues[ft_name]
 
 def ks_cal_func(df, grps=10, ascd = False):
+    """
+    计算KS值
+    """
     ft_name, _ = df.columns.values
     #单因子统计的时候不需要考虑缺失情况
     df = df.dropna()

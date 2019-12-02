@@ -12,9 +12,15 @@ from tools import *
 
 
 class bins_method_funcs(object):
+    """
+    提供分箱方法的对象，最终反馈的是分组对应的分箱以及特征取值区间
+    """
     def __init__(self, pct_size = 0.05, max_grps = 5, chiq_pv = 0.05):
         """
         单因子的WOE处理方法，包含三种分享方式，WOE编码的具体防范
+        pct_size：控制分组的最小占比
+        max_grps:控制最大分组数
+        chiq_pv:卡方分组的合并基准
         """
         self.argms = {}
         self.argms['pct_size'] = pct_size
@@ -22,10 +28,16 @@ class bins_method_funcs(object):
         self.argms['chiq_pv'] = chiq_pv
 
     def setTgt(self, df):
+        """
+        df:必须是一个两列的DataFrame，其中第一列是特征，第二列是label
+        """
         self.raw = df
         self.ft_name, _ = self.raw.columns.values
 
     def setParams(self, params):
+        """
+        与self.argms对应，可以重新设置参数
+        """
         for i in params.keys():
             if i not in ['pct_size', 'max_grps', 'chiq_pv']:
                 warnings.warn('Invalid Parameters, Please Check')
@@ -34,6 +46,7 @@ class bins_method_funcs(object):
     def _chi_cal_func(data):
         """
         所有相邻分组直接的卡方计算
+        包含ftr, label, 以及已经用过pd.cut之后的‘grp’特征
         """
         names = list(data.columns.values)
         names.remove('grp')
@@ -56,7 +69,7 @@ class bins_method_funcs(object):
 
     def _llt_cap_func(x, s, b):
         """
-        极值的处理函数
+        极值的处理函数，s,b 代表具体的数值
         """
         return max(s, min(x, b))
 
@@ -66,6 +79,9 @@ class bins_method_funcs(object):
         1.当分组的单调性不满足的时候，优先合并chiq检验最不显著的分组；
         2.重复以上步骤
         3.cuts要保持单调
+        参数含义：
+        1.tgt，目标特征及label
+        2.cuts，对应bins
         """
         df = tgt.copy().dropna()
         ft_name, _ = df.columns.values
@@ -83,9 +99,13 @@ class bins_method_funcs(object):
 
     def _setStrValue(self, strs2orders):
         """
-        给予字符串变量可比较性
+        给予字符串变量可比较性；
+        strs2orders : 一个字典包含对应的字符串与数值对应关系
         """
-        self.raw[self.ft_names] = self.raw[self.ft_names].apply(lambda x: strs2orders[x] if x in strs2orders.keys() else np.nan)
+        self.raw[self.ft_names] = self.raw[self.ft_names].apply(lambda x: strs2orders[x] if x in strs2orders.keys() else None)
+
+    def eq_bins_func(data, tgt, grps = 2):
+        pass
 
     def qlt_bins_func(self):
         """
@@ -128,12 +148,13 @@ class bins_method_funcs(object):
         self.bins = {self.ft_name:cuts}
         self.cap_info = {'max': tmp[self.ft_name].max(), 'min':tmp[self.ft_name].min()}
 
-    def dist_bins_funcs(self):
+    def _dist_bins_funcs(tgt, grps = 10):
         """
         基于特征取值范围进行分组，需要应对分布不均匀的情况
         目前看上去没有必要保留此函数
         """
-        pass
+        bins = [tgt.min() + i * np.float((tgt.max()-tgt.min()))/grps] + [tgt.max()]
+        return bins
 
     def freq_bins_funcs(self):
         """
@@ -229,7 +250,12 @@ class bins_method_funcs(object):
         return self.bins
 
 class WoeFuncs(bins_method_funcs):
-    """docstring for WoeFuncs."""
+    """docstring for WoeFuncs.
+    具体使用方式：
+    1.初始化类，定义分组最小占比，最大分组数，卡方合并阈值，是否单调，是否保留空值，分箱方式
+    2.设定目标特征，提供特征及对应的label--class.setTgt()
+    3.根据是否是数值型变量，使用class.woe_cal() 或者 class.strWoe_cal()
+    """
     def __init__(self, pct_size = 0.05, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree'):
         super(WoeFuncs, self).__init__(pct_size, max_grps, chiq_pv)
         self.ifmono = True; self.ifnan = True
@@ -342,6 +368,9 @@ class WoeFuncs(bins_method_funcs):
         self.iv_stat['iv_value'] = woe['iv'].sum()
 
     def _strWoe_merge(df, ft_name, org_bins, max_grps):
+        """
+        对于分类型特征进行基于iv值的合并，需要提供特征名称，对应的原始分组，最大分组数
+        """
         df['grp'] = df[ft_name].apply(lambda x: org_bins[x] if x in org_bins.keys() else 'nan')
         df = df[df['grp']!='nan']
 
@@ -449,7 +478,7 @@ class AllWoeFuncs(WoeFuncs):
             self.setTgt(self.data[[i, 'label']])
             if self.ftrs.keys[i] == 'str':
                 self.strWoe_cal()
-            elif self.ftrs.keys[i] == 'int':
+            elif self.ftrs.keys[i] in ['int', 'float']:
                 self.woe_cal()
             elif isinstance(self.ftrs.keys[i], dict):
                 self._setStrValue(self.ftrs.keys[i])
