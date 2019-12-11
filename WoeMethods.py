@@ -8,6 +8,7 @@ from scipy import stats
 import tqdm
 from sklearn.tree import DecisionTreeClassifier
 
+
 from tools import *
 
 
@@ -43,7 +44,7 @@ class bins_method_funcs(object):
                 warnings.warn('Invalid Parameters, Please Check')
             self.argms[i] = params[i]
 
-    def _chi_cal_func(data):
+    def _chi_cal_func(self, data):
         """
         所有相邻分组直接的卡方计算
         包含ftr, label, 以及已经用过pd.cut之后的‘grp’特征
@@ -63,17 +64,17 @@ class bins_method_funcs(object):
         for i in range(len(grps)-1):
             tmp = stat[(stat['grp']==grps[i])|(stat['grp']==grps[i+1])]
             piv = tmp.pivot(index = 'grp', columns = 'label', values = tgt)
-            chis += stats.chisquare(piv.loc[grps[i]], piv.loc[grps[i+1]])[0]
+            chis += stats.chi2_contingency(np.array(piv.loc[[grps[i], grps[i+1]]]))[0]
 
         return chis
 
-    def _llt_cap_func(x, s, b):
+    def _llt_cap_func(self, x, s, b):
         """
         极值的处理函数，s,b 代表具体的数值
         """
         return max(s, min(x, b))
 
-    def _bins_merge_chiq(tgt, cuts):
+    def _bins_merge_chiq(self, tgt, cuts):
         """
         基于卡方的单调性保证：
         1.当分组的单调性不满足的时候，优先合并chiq检验最不显著的分组；
@@ -86,7 +87,7 @@ class bins_method_funcs(object):
         df = tgt.copy().dropna()
         ft_name, _ = df.columns.values
 
-        df['grp'] = pd.cut(df[ft_name], bins = cuts, index = range(len(cuts)-1), right = False)
+        df['grp'] = pd.cut(df[ft_name], bins = cuts, labels = range(len(cuts)-1), right = False)
         chis = self._chi_cal_func(df)
 
         #单调性检验，同时合并卡方最不显著的分组
@@ -104,7 +105,7 @@ class bins_method_funcs(object):
         """
         self.raw[self.ft_names] = self.raw[self.ft_names].apply(lambda x: strs2orders[x] if x in strs2orders.keys() else None)
 
-    def eq_bins_func(data, tgt, grps = 2):
+    def eq_bins_func(self, data, tgt, grps = 2):
         pass
 
     def qlt_bins_func(self):
@@ -148,7 +149,7 @@ class bins_method_funcs(object):
         self.bins = {self.ft_name:cuts}
         self.cap_info = {'max': tmp[self.ft_name].max(), 'min':tmp[self.ft_name].min()}
 
-    def _dist_bins_funcs(tgt, grps = 10):
+    def _dist_bins_funcs(self, tgt, grps = 10):
         """
         基于特征取值范围进行分组，需要应对分布不均匀的情况
         目前看上去没有必要保留此函数
@@ -240,9 +241,9 @@ class bins_method_funcs(object):
         """
         bins = self.bins
 
-        tmp = data.dropna()
+        tmp = self.raw.dropna()
 
-        tmp[self.ft_name] = tmp[self.ft_name].apply(self._llt_cap_func, (cap_info['min'], cap_info['max']))
+        tmp[self.ft_name] = tmp[self.ft_name].apply(self._llt_cap_func, (self.cap_info['min'], self.cap_info['max']))
         cuts = self._bins_merge_chiq(tmp, bins)
         self.bins = {self.ft_name:cuts}
 
@@ -310,6 +311,7 @@ class WoeFuncs(bins_method_funcs):
         woe = pd.DataFrame(rlts, columns = [self.ft_name, 'bad', 'size'])
 
         #IV及woe值的计算
+        bad = woe['bad'].sum(); good = woe['size'].sum() - bad
         woe['good'] = woe['size'] - woe['bad']
         woe['woe'] = ((woe['bad']/bad)/(woe['good']/good)).apply(np.int)
         woe['iv'] = (woe['bad']/bad - woe['good']/good) * woe['woe']
@@ -351,7 +353,7 @@ class WoeFuncs(bins_method_funcs):
 
         woe = tmp[['grp', 'label']].groupby('grp', as_index = False).agg({'label':['sum', 'count']})
         woe.columns = [self.ft_name, 'bad', 'size']
-
+        bad = woe['bad'].sum(); good = woe['size'].sum() - bad
         woe['good'] = woe['size'] - woe['bad']
         woe['woe'] = ((woe['bad']/bad)/(woe['good']/good)).apply(np.int)
         woe['iv'] = (woe['bad']/bad - woe['good']/good) * woe['woe']

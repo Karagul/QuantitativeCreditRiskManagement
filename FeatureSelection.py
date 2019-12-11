@@ -4,11 +4,14 @@ import numpy as np
 import re
 import json
 from scipy import stats
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import statsmodels.api as sm
 import xgboost as xgb
 import random
 import warnings
+from sklearn import metrics
 
-import model_builder
+from model_builder import *
 from tools import *
 from WoeMethods import bins_method_funcs
 
@@ -17,27 +20,6 @@ if sklearn.__version__ > '0.20.0':
     from sklearn.model_selection import train_test_split
 else:
     from sklearn.cross_validation import train_test_split
-
-params = {
-#'booster':'gbtree',
-'objective': 'binary:logistic', #多分类的问题
-#'eval_metric': 'auc',
-#'num_class':10, # 类别数，与 multisoftmax 并用
-'gamma':0.2,  # 用于控制是否后剪枝的参数,越大越保守，一般0.1、0.2这样子。
-'max_depth':3, # 构建树的深度，越大越容易过拟合
-'lambda':1000,  # 控制模型复杂度的权重值的L2正则化项参数，参数越大，模型越不容易过拟合。
-#'subsample':0.7, # 随机采样训练样本
-#'colsample_bytree':0.7, # 生成树时进行的列采样
-'min_child_weight': 5,
-# 这个参数默认是 1，是每个叶子里面 h 的和至少是多少，对正负样本不均衡时的 0-1 分类而言
-#，假设 h 在 0.01 附近，min_child_weight 为 1 意味着叶子节点中最少需要包含 100 个样本。
-#这个参数非常影响结果，控制叶子节点中二阶导的和的最小值，该参数值越小，越容易 overfitting。
-'silent':1 ,#设置成1则没有运行信息输出，最好是设置为0.
-'eta': 0.1, # 如同学习率
-'seed':1000,
-'nthread':-1,# cpu 线程数
-'eval_metric': 'logloss'
-}
 
 
 class ModelBasedMethods(object):
@@ -70,41 +52,64 @@ class ModelBasedMethods(object):
         except:
             raise ValueError('Invalid Parameters')
 
-    def _random_select(self, nums, rnd_seed = None):
-        ftrs = self.features[:]
+    def _random_select(self, ftrs, musthave = None, nums = 20, rnd_seed = None):
+        #随机挑选特征
         if rnd_seed is not None:
             random.seed(rnd_seed)
+
+        if musthave is not None:
+            for i in musthave:
+                ftrs.remove(i)
+
         tmp = random.sample(ftrs, nums)
         if len(tmp) < nums:
             warnings.warn('not enough features for random feature selections')
-        self.tgt_ftrs = tmp
+        return tmp
 
-    def _random_select_cor(self, ftrs, nums, corr_c = 0.75, rnd_seed = None):
-        ftrs = self.features[:]
+    def _random_select_cor(self, ftrs, nums, musthave = None, corr_c = 0.75, rnd_seed = None):
+        #随机挑选特征，但要考虑相关性
         corr = self.corr.copy()
         if rand_seed is not None:
             random.seed(rnd_seed)
 
-        rlts = []
+        if musthave is not None:
+            rlts = musthave
+        else:
+            rlts = []
+        pcr = list(corr.index.values)
 
-        while  len(rlts)<nums or len(ftrs)>0:
+        for i in rlts:
+            ops = corr.loc[pcr,i]
+            prc = list(ops[ops<corr_c].index.values)
+
+        while  len(rlts)<nums or len(pcr)>0:
             rlts += [random.sample(ftrs, 1)[0]]
-            pc = corr[rlts[-1]]
+            pc = corr.loc[pcr, rlts[-1]]
             pc = pc[pc<corr_c]
-            ftrs = list(pc.index.values)
+            pcr = list(pc.index.values)
 
-        if len(tmp) < nums:
+        if len(rlts) < nums:
             warnings.warn('not enough features for random feature selections')
-        self.tgt_ftrs = tmp
+        return rlts
 
-    def _ftr_filter(self, tgt, tgt_c = 0.02, corr_c = 0.75):
+    def _model_perform_funcs(self, ylabel, ypred):
+        #统计模型表现
+        rlt = {}
+        rlt['auc'] = metrics.roc_auc_score(ylable, ypred)
+        rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
+        rlt['logloss'] = metrics.log_loss(ylabel, ypred)
+        return rlt
+
+    def ftr_filter(self, tgt, tgt_c = 0.02, corr_c = 0.75):
         """
-        根据IV值及相关性进行特征选择
+        根据特定指标及相关性进行特征选择
+        tgt.shape = (n, 1)
         """
         corr = self.corr.copy()
-        tgt.sort_values('iv', ascending = False, inplace = True)
-        tgt = tgt[tgt['iv']]
-        lstd_bs = list(tgt['ft_names'])
+        score_name = list(tgt.columns.values)[0]
+        tgt.sort_values(score_name, ascending = False, inplace = True)
+        tgt = tgt[tgt[score_name]]
+        lstd_bs = list(tgt.index.values)
         vld = []
         while len(lstd_bs) >= 1:
             vld += [lstd_bs[0]]
@@ -117,33 +122,106 @@ class ModelBasedMethods(object):
 
         return vld
 
-    def featureStat(self, name, rnd_seed = None, dir_output = False):
-        x = self.raw[self.tgt_ftrs]
+    def _vif_filter(self, X, thres=10.0):
+        """
+        每轮循环中计算各个变量的VIF，并删除VIF>threshold 的变量
+        理论上应该放到逻辑回归前面，暂时没有启用
+        """
+        col = list(range(X.shape[1]))
+        dropped = True
+        while dropped:
+            dropped = False
+            vif = [variance_inflation_factor(X.iloc[:,col].values, ix)
+                   for ix in range(X.iloc[:,col].shape[1])]
+
+            maxvif = max(vif)
+            maxix = vif.index(maxvif)
+            if maxvif > thres:
+                del col[maxix]
+                print('delete=',X_train.columns[col[maxix]],'  ', 'vif=',maxvif )
+                dropped = True
+        print('Remain Variables:', list(X.columns[col]))
+        print('VIF:', vif)
+        return list(X.columns[col])
+
+    def featureStat_model(self, ftrs = None, modeltype = 'lr', rnd_seed = None):
+        """
+        根据model model_builder中的模型进行特征与模型表现的统计
+        共有lrModel, xgbModel, cvModel三类
+        """
+        if ftrs is None:
+            ftrs = self.features
+
+        x = self.raw[ftrs]
         y = self.raw['label']
 
         train, test, train_lb, test_lb = train_test_split(x, y, test_size = 0.3, random_state = rnd_seed)
-        dtrain = xgb.DMatrix(train, label = train_lb, missing = np.nan)
-        dtest  = xgb.DMatrix(test, label = test_lb, missing = np.nan)
+        if modeltype == 'lr':
+            if x.isnull().max().max() == 1:
+                raise ValueError('unprocessed features with None values, pls check')
 
-        watchlist = [(dtrain, 'train'), (dtest, 'eval')]
-        model = xgb.train(self.params, dtrain, rounds, watchlist, early_stopping_rounds = 200)
-        feat_imp = pd.DataFrame(model.get_fscore(), index = ['fscore']).T
+        if modeltype == 'lr':
+            model = lrModel(params = self.params)
+        elif modeltype == 'xgb':
+            model = xgbModel(params = self.params)
+        elif modeltype == 'cv':
+            model = cvModel(params = self.params)
+        else:
+            raise ValueError('other methods not provided')
 
-        stat = feat_imp['fscore'].to_dict()
-        lfts = [a for a in self.tgt_ftrs if a not in stat.keys()]
-        for i in lftrs:
-            lfts[i] = 0
-        json_str = json.dumps(psi_new, indent= 4, ensure_ascii= False)
-        with open(path+'/feat_imps/'+name+'.json', 'w', encoding= 'utf-8') as f:
-            f.write(json_str)
-            f.close()
+        self.model_ = model.fit(train, test, train_lb, test_lb)
+        self.model_perform_ = self.model_.getMperfrm()
 
-        if dir_output:
-            return feat_imp
+    def getTvalues(self, mtrc, name = None):
+        feat_imp = pd.DataFrame(self.model_.getTvalues(mtrc), columns = ['fscore'])
+        stat = feat_imp.to_dict()
+        lfts = [a for a in self.model_.ft_names if a not in stat.keys()]
+        for i in lfts:
+            stat['fscore'][i] = 0
 
-    def featureAvgScore(self, top = None):
+        if name is not None:
+            json_str = json.dumps(stat, indent= 4, ensure_ascii= False)
+            with open(self.path + '/feat_imps/'+name+'_ftimp.json', 'w', encoding= 'utf-8') as f:
+                f.write(json_str)
+                f.close()
+
+            with open(self.path + '/feat_imps/all_auc.json', 'a') as f:
+                f.write(name+'_ft_imp %.4f %.4f/n'%(self.model_perform_['train']['auc'], self.model_peform_['test']['auc']))
+                f.close()
+
+        return pd.DataFrame(stat)
+
+    def modelIprv_oneStep_plus(self, base_ftrs, tgts, modeltype = 'lr', rnd_seed = None, mtrc = 'auc', eval = 'train'):
+        """
+        可以用多进程优化
+        """
+        all_rlts = []
+        for i in tgts:
+            self.featureStat_model(base_ftrs+[i], modeltype, rnd_seed)
+            all_rlts += [self.model_perform_[eval][mtrc]]
+
+        return {tgts[all_rlts.index(max(all_rlts))]:max(all_rlts)}
+
+    def modelIprv_oneStep_minus(self, base_ftrs, modeltype = 'lr', rnd_seed = None, mtrc = 'auc', eval = 'train'):
+        """
+        可以用多进程优化
+        """
+        all_rlts = []
+        for i in base_ftrs:
+            ops = base_ftrs[:]
+            ops.remove(i)
+            self.featureStat_model(ops, modeltype, rnd_seed)
+            all_rlts += [self.model_perform_[eval][mtrc]]
+
+        return {base_ftrs[all_rlts.index(max(all_rlts))]:max(all_rlts)}
+
+    def featureAvgScore(self, top = None, ftr_c = 0.65):
         scores_records = tools.getFiles(self.path+'/feat_imps')
-        for f in range(len(scores_records)):
+        model_p = pd.read_table(self.path+'/feat_imps/all_auc.json', sep = ' ', names = ['files', 'train_auc', 'test_auc'])
+        model_p = model_p[model_p['train_auc']>=ftr_c]
+        vald_records = list(model_p['files'])
+
+        for f in range(len(vald_records)):
             tgt = tools.getJson(self.path+'/feat_imps/'+scores_records[f])
             rcd = pd.DataFrame({scores_records[f]:tgt})
             rcd.sort_values(scores_records[f], ascending = False, inplace = True)

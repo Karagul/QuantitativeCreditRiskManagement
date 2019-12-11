@@ -10,166 +10,182 @@ import pandas as pd
 import numpy as np
 
 import xgboost as xgb
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_validate, KFold
 from sklearn import metrics
 from sklearn.externals import joblib
+from sklearn.base import BaseEstimator, ClassifierMixin
+from xgboost import XGBClassifier
 
 import statsmodels.api as sm
 
 import FeatureStatTools as funcs
 
-params = {
-#'booster':'gbtree',
-'objective': 'binary:logistic', #多分类的问题
-#'eval_metric': 'auc',
-#'num_class':10, # 类别数，与 multisoftmax 并用
-'gamma':0.2,  # 用于控制是否后剪枝的参数,越大越保守，一般0.1、0.2这样子。
-'max_depth':3, # 构建树的深度，越大越容易过拟合
-'lambda':1000,  # 控制模型复杂度的权重值的L2正则化项参数，参数越大，模型越不容易过拟合。
-#'subsample':0.7, # 随机采样训练样本
-#'colsample_bytree':0.7, # 生成树时进行的列采样
-'min_child_weight': 5,
-# 这个参数默认是 1，是每个叶子里面 h 的和至少是多少，对正负样本不均衡时的 0-1 分类而言
-#，假设 h 在 0.01 附近，min_child_weight 为 1 意味着叶子节点中最少需要包含 100 个样本。
-#这个参数非常影响结果，控制叶子节点中二阶导的和的最小值，该参数值越小，越容易 overfitting。
-'silent':1 ,#设置成1则没有运行信息输出，最好是设置为0.
-'eta': 0.1, # 如同学习率
-'seed':1000,
-'nthread':-1,# cpu 线程数
-'eval_metric': 'logloss'
-}
-
 #num_rounds = 500
 
-def lr_model(train, test, add_const = True):
-    #all_d = pd.concat([train, test])
-    #p_m = all_d['phone_price_price'].median()
+class xgbModel(BaseEstimator, ClassifierMixin):
+    """
+    模型类比较相似，初始化之后会有都函数包括：
+    1.进行参数调整都函数：setParams_;
+    2.进行模型表现计算的函数：_model_perform_funcs;
+    3.传入train，test并进行拟合的函数：fit；
+    4.用以应用模型预测分数的函数：predict；
+    5.用来获取特征重要性的函数：getTvalues;
+    6.用来获取模型表现的函数:getMperfrm
+    """
+    def __init__(self, params = {'params':{'boosting':'gbtree','objective':'binary:logistic',
+                    "nthread":20, 'eta':0.1, 'eval_metric': 'logloss',
+                    'max_depth':5,'subsample':0.7,'colsample_bytree':0.7, 'gamma':0.2},
+                    'early_stopping_rounds':10, 'num_rounds':200}):
 
-    train_y = train['label']
-    train_x = train.drop('label', axis = 1)
-    test_y = test['label']
-    test_x = test.drop('label', axis = 1)
-    if 'phone_price_price' in train.columns.values:
-        all_d = pd.concat([train, test])
-        p_m = all_d['phone_price_price'].median()
-        test_x['phone_price_price'] = test_x['phone_price_price'].fillna(p_m)
-        train_x['phone_price_price'] = train_x['phone_price_price'].fillna(p_m)
+        self.params = params['params']
+        self.early_stopping_rounds = params['early_stopping_rounds']
+        self.num_rounds = params['num_rounds']
 
-    if add_const:
-        test_x = sm.add_constant(test_x.fillna(0))
-        train_x = sm.add_constant(train_x.fillna(0))
-    else:
-        test_x = test_x.fillna(0)
-        train_x = train_x.fillna(0)
-    model = sm.Logit(train_y, train_x).fit()
+    def setParams_(self, params):
+        self.params = params
 
-    xpred = model.predict(train_x)
-    ypred = model.predict(test_x)
+    def _model_perform_funcs(self, ylabel, ypred):
+        rlt = {}
+        if ylabel is None or ypred is None:
+            rlt['auc'] = metrics.roc_auc_score(ylabel, ypred)
+            rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
+            rlt['logloss'] = metrics.log_loss(ylabel, ypred)
+        else:
+            rlt['auc'] = None
+            rlt['apr'] = None
+            rlt['logloss'] = None
+        return rlt
 
-    ft_imp = pd.DataFrame(model.tvalues, columns = ['tvalue'])
-    df = pd.DataFrame([ypred, test_y], index = ['pred', 'label']).T
-    ks = funcs.ks_cal(df, grps = 10, ascd = False)
+    def fit(self, train, train_label, test, test_label, train_weight = None, test_weight = None):
+        train_data = xgb.DMatrix(train, train_label, weight= train_weight)
+        test_data = xgb.DMatrix(test, test_label, weight= test_weight)
+        eval_watch = [(train_data, 'train'), (test_data, 'eval')]
+        self.ft_names = list(train.columns.values)
 
-    df_train = pd.DataFrame([xpred, train_y], index = ['pred', 'label']).T
-    ks_train = funcs.ks_cal(df_train, grps = 10, ascd = False)
+        xgb_bst=xgb.train({**self.params},train_data, self.num_rounds,\
+                          evals=eval_watch, early_stopping_rounds=self.early_stopping_rounds,verbose_eval=False)
+        self.model_ = xgb_bst
+        self.Mperfrm = {'train':self._model_perform_funcs(xgb_bst.predict(train), train_label), 'test':self._model_perform_funcs(xgb_bst.predict(test), test_label)}
 
-    score_test = [metrics.roc_auc_score(test_y, ypred)]
-    score_test += [metrics.average_precision_score(test_y, ypred)]
-    score_test += [metrics.log_loss(test_y, ypred)]
-    score_test += [ks['ks'].max()]
+        return self
 
-    score_train = [metrics.roc_auc_score(train_y, xpred)]
-    score_train += [metrics.average_precision_score(train_y, xpred)]
-    score_train += [metrics.log_loss(train_y, xpred)]
-    score_train += [ks_train['ks'].max()]
+    def predict(self, x, y = None):
+        x = xgb.DMatrix(x, y)
+        return np.array(self.model_.predict(x))
 
-    return ft_imp, score_test, score_train, df, df_train, ks
+    def getTvalues(self, mtrc):
+        return self.model_.get_fscore(mtrc)
+
+    def getMperfrm(self):
+        return self.Mperfrm
+
+class lrModel(BaseEstimator, ClassifierMixin):
+    """docstring for ."""
+    def __init__(self, params= {'ifconst':True, 'ifnull':True}):
+        self.ifconst = params['ifconst']
+        self.ifnull = params['ifnull']
+
+    def setParams_(self, params):
+        self.params = params
+
+    def _model_perform_funcs(self, ylabel, ypred):
+        rlt = {}
+        rlt['auc'] = metrics.roc_auc_score(ylabel, ypred)
+        rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
+        rlt['logloss'] = metrics.log_loss(ylabel, ypred)
+        return rlt
+
+    def fit(self, train, train_label, test = None, test_label = None, train_weight = None, test_weight = None):
+        #self.train = train, self.train_label = train_label, self.test = test, self.test_label = test_label
+        self.ft_names = list(train.columns.values)
+
+        if self.ifconst:
+            x = sm.add_constant(train)
+        else:
+            x = self.x.copy()
+
+        if self.ifnull:
+            x = x.fillna(0)
+
+        model = sm.Logit(train_label, x).fit()
+        self.model_ = model
+        self.Mperfrm = {'train':self._model_perform_funcs(model.predict(train), train_label), 'test':self._model_perform_funcs(model.predict(test), test_label)}
+
+        return self
+
+    def predict(self, x, y = None):
+        return np.array(self.model_.predict(x))
+
+    def getTvalues(self, mtc = None):
+        return self.model_.tvalues
+
+    def getCoefs(self):
+        return self.model_.params
+
+    def getMperfrm(self):
+        return self.Mperfrm
+
+class cvModel(BaseEstimator, ClassifierMixin):
+    def __init__(self, params = {'modeltype':'lr', 'kfold':5, 'params':{}}):
+        if params['modeltype'] == 'lr':
+            model = lrModel(params['params'])
+        elif params['modeltype'] == 'xgb':
+            model = xgbModel(params['params'])
+        else:
+            raise ValueError('unsupported methods')
+
+        self.model_ = model
+        self.kfolds = params['kfold']
+        self.params = params['params']
+
+    def setParams_(self, params):
+        self.params = params
+
+    def fit(self, train, train_label, test = None, test_label = None, train_weight = None, test_weight = None):
+        kfolds = KFold(n_splits=self.kfolds,shuffle=False).split(train)
+        models = []
+        for train_index, test_index in kfolds:
+            sub_train = train.loc[train_index]; sub_test = train.loc[test_index]
+            sub_train_label = train_label.loc[train_index]; sub_test_label = train_label.loc[test_index]
+            sub_train_weight = train_weight.loc[train_index]; sub_test_weight = train_weight.loc[test_index]
+
+            models += [self.model_.fit(sub_train, sub_train_label, sub_test, sub_test_label, sub_train_weight, sub_test_weight)]
+
+        self.models = models
+        return self
+
+    def predict(self, x, y = None):
+        """
+        this function returns the average prediction of all saved models!
+        could be same bias when used to predict trainning sample
+        """
+        warnings.warn("""this function returns the average prediction of all functions!
+                         could be same bias when used to predict trainning samples""")
+        for m in range(len(self.models)):
+            if m == 0:
+                df = pd.DataFrame(self.models[m].predict(x,y), columns = ['model_'+str(m)])
+            else:
+                tmp = pd.DataFrame(self.models[m].predict(x,y), columns = ['model_'+str(m)])
+                df = pd.merge(left = df, right = tmp, left_index = True, right_index = True, how = 'outer')
 
 
-def xgb_model(train, test, params = params, rounds = 500):
-    train_y = train['label']
-    train_x = train.drop('label', axis = 1)
-    test_y = test['label']
-    test_x = test.drop('label', axis = 1)
+        return df.mean(axis = 1)
 
-    dtrain = xgb.DMatrix(train_x, label = train_y, missing = np.nan)
-    dtest  = xgb.DMatrix(test_x, label = test_y, missing = np.nan)
+    def getTvalues(self, mtc = None):
+        for m in range(len(self.models)):
+            if m == 0:
+                df = pd.DataFrame(self.models[m].getTvalues(mtc), columns = ['model_'+str(m)])
+            else:
+                tmp = pd.DataFrame(self.models[m].getTvalues(mtc), columns = ['model_'+str(m)])
+                df = pd.merge(left = df, right = tmp, left_index = True, right_index = True, how = 'outer')
 
-    watchlist = [(dtrain, 'train'), (dtest, 'eval')]
-    model = xgb.train(params, dtrain, rounds, watchlist, early_stopping_rounds = 200)
-    ypred = model.predict(dtest)
+        df = df.fillna(0)
+        return df.mean(axis = 1)
 
-    df = pd.DataFrame([ypred, test_y], index = ['pred', 'label']).T
-    ks = funcs.ks_cal(df, grps = 10, ascd = False)
+    def getMperfrm(self, train = None, train_label = None, test = None, test_label = None):
+        rlts = [m.getMperfrm() for m in self.models]
 
-    df_train = pd.DataFrame([xpred, train_y], index = ['pred', 'label']).T
-    ks_train = funcs.ks_cal(df_train, grps = 10, ascd = False)
+        train = pd.DataFrame([a['train'] for a in rlts])
+        test = pd.DataFrame([a['test'] for a in rlts])
 
-    feat_imp = pd.DataFrame(model.get_fscore(), index = ['fscore']).T
-    feat_imp.sort_values('fscore', inplace = True, ascending = False)
-    feat_imp['fscore'] = feat_imp['fscore']/feat_imp['fscore'].sum()
-
-    score_test = [metrics.roc_auc_score(test_y, ypred)]
-    score_test += [metrics.average_precision_score(test_y, ypred)]
-    score_test += [metrics.log_loss(test_y, ypred)]
-    score_test += [ks['ks'].max()]
-
-    score_train = [metrics.roc_auc_score(train_y, xpred)]
-    score_train += [metrics.average_precision_score(train_y, xpred)]
-    score_train += [metrics.log_loss(train_y, xpred)]
-    score_train += [ks_train['ks'].max()]
-
-    #y_pred = pd.DataFrame([test_y, ypred], columns = ['label', 'pred'])
-
-    return feat_imp, score_test, score_train, df, df_train
-
-def xgb_model_forselection(train, test, params = params, rounds = 500, early_stopping_rounds = 200):
-    train_y = train['label']
-    train_x = train.drop('label', axis = 1)
-    test_y = test['label']
-    test_x = test.drop('label', axis = 1)
-
-    dtrain = xgb.DMatrix(train_x, label = train_y, missing = np.nan)
-    dtest  = xgb.DMatrix(test_x, label = test_y, missing = np.nan)
-
-    watchlist = [(dtrain, 'train'), (dtest, 'eval')]
-    model = xgb.train(params, dtrain, rounds, watchlist, early_stopping_rounds = 200)
-    feat_imp = pd.DataFrame(model.get_fscore(), index = ['fscore']).T
-
-    return feat_imp
-
-def xgb_model_with_train(train, test, params = params, rounds = 500):
-    train_y = train['label']
-    train_x = train.drop('label', axis = 1)
-    test_y = test['label']
-    test_x = test.drop('label', axis = 1)
-
-    dtrain = xgb.DMatrix(train_x, label = train_y, missing = np.nan)
-    dtest  = xgb.DMatrix(test_x, label = test_y, missing = np.nan)
-
-    watchlist = [(dtrain, 'train'), (dtest, 'eval')]
-    model = xgb.train(params, dtrain, rounds, watchlist, early_stopping_rounds = 200)
-    ypred = model.predict(dtest)
-    xpred = model.predict(dtrain)
-
-    df = pd.DataFrame([ypred, test_y], index = ['pred', 'label']).T
-    ks = funcs.ks_cal(df, grps = 10, ascd = False)
-
-    df_train = pd.DataFrame([xpred, train_y], index = ['pred', 'label']).T
-    ks_train = funcs.ks_cal(df_train, grps = 10, ascd = False)
-
-    feat_imp = pd.DataFrame(model.get_fscore(), index = ['fscore']).T
-    feat_imp.sort_values('fscore', inplace = True, ascending = False)
-    feat_imp['fscore'] = feat_imp['fscore']/feat_imp['fscore'].sum()
-
-    score_test = [metrics.roc_auc_score(test_y, ypred)]
-    score_test += [metrics.average_precision_score(test_y, ypred)]
-    score_test += [metrics.log_loss(test_y, ypred)]
-    score_test += [ks['ks'].max()]
-
-    score_train = [metrics.roc_auc_score(train_y, xpred)]
-    score_train += [metrics.average_precision_score(train_y, xpred)]
-    score_train += [metrics.log_loss(train_y, xpred)]
-    score_train += [ks_train['ks'].max()]
-
-    return model, feat_imp, score_test, score_train, df, df_train, ks
+        return {'train_mean':train.mean().to_dict(), 'test_mean':test.mean().to_dict(), 'train_std':train.std().to_dict(), 'test_std':test.std().to_dict()}
