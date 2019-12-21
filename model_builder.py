@@ -19,6 +19,7 @@ from xgboost import XGBClassifier
 import statsmodels.api as sm
 
 import FeatureStatTools as funcs
+import warnings
 
 #num_rounds = 500
 
@@ -41,12 +42,16 @@ class xgbModel(BaseEstimator, ClassifierMixin):
         self.early_stopping_rounds = params['early_stopping_rounds']
         self.num_rounds = params['num_rounds']
 
-    def setParams_(self, params):
-        self.params = params
+    def setParams(self, params):
+        try:
+            for i in params.keys():
+                self.params[i] = params[i]
+        except:
+            raise ValueError('Invalid Parameters')
 
     def _model_perform_funcs(self, ylabel, ypred):
         rlt = {}
-        if ylabel is None or ypred is None:
+        if ylabel is not None and ypred is not None:
             rlt['auc'] = metrics.roc_auc_score(ylabel, ypred)
             rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
             rlt['logloss'] = metrics.log_loss(ylabel, ypred)
@@ -64,9 +69,15 @@ class xgbModel(BaseEstimator, ClassifierMixin):
 
         xgb_bst=xgb.train({**self.params},train_data, self.num_rounds,\
                           evals=eval_watch, early_stopping_rounds=self.early_stopping_rounds,verbose_eval=False)
+        
+        train_pred = xgb_bst.predict(train_data)
+        if test is not None:
+            test_pred = xgb_bst.predict(test_data)
+        else:
+            test_pred = None
         self.model_ = xgb_bst
-        self.Mperfrm = {'train':self._model_perform_funcs(xgb_bst.predict(train), train_label), 'test':self._model_perform_funcs(xgb_bst.predict(test), test_label)}
-
+        self.Mperfrm = {'train':self._model_perform_funcs(train_label,train_pred), 'test':self._model_perform_funcs(test_label,test_pred)}
+        
         return self
 
     def predict(self, x, y = None):
@@ -74,7 +85,7 @@ class xgbModel(BaseEstimator, ClassifierMixin):
         return np.array(self.model_.predict(x))
 
     def getTvalues(self, mtrc):
-        return self.model_.get_fscore(mtrc)
+        return pd.Series(self.model_.get_score(importance_type=mtrc))
 
     def getMperfrm(self):
         return self.Mperfrm
@@ -101,15 +112,28 @@ class lrModel(BaseEstimator, ClassifierMixin):
 
         if self.ifconst:
             x = sm.add_constant(train)
+            if test is not None:
+                x_test = sm.add_constant(test)
         else:
-            x = self.x.copy()
+            x = train
+            if test is not None:
+                x_test = test
 
-        if self.ifnull:
+        if x.isna().sum().sum()>0:
+            warnings.warn('exist na data in logistic regression fitting')
             x = x.fillna(0)
+            train=train.fillna(0)
+            if not test is None:
+                test=test.fillna(0)
 
         model = sm.Logit(train_label, x).fit()
+        train_pred = model.predict(x)
+        if test is not None:
+            test_pred = model.predict(x_test)
+        else:
+            test_pred = None
         self.model_ = model
-        self.Mperfrm = {'train':self._model_perform_funcs(model.predict(train), train_label), 'test':self._model_perform_funcs(model.predict(test), test_label)}
+        self.Mperfrm = {'train':self._model_perform_funcs(train_label,train_pred), 'test':self._model_perform_funcs(test_label,test_pred)}
 
         return self
 
@@ -138,20 +162,29 @@ class cvModel(BaseEstimator, ClassifierMixin):
         self.kfolds = params['kfold']
         self.params = params['params']
 
-    def setParams_(self, params):
-        self.params = params
+    def setParams(self, params):
+        try:
+            for i in params.keys():
+                self.params[i] = params[i]
+        except:
+            raise ValueError('Invalid Parameters')
 
     def fit(self, train, train_label, test = None, test_label = None, train_weight = None, test_weight = None):
-        kfolds = KFold(n_splits=self.kfolds,shuffle=False).split(train)
+        kfolds = KFold(n_splits=self.kfolds,shuffle=True).split(train)
         models = []
         for train_index, test_index in kfolds:
-            sub_train = train.loc[train_index]; sub_test = train.loc[test_index]
-            sub_train_label = train_label.loc[train_index]; sub_test_label = train_label.loc[test_index]
-            sub_train_weight = train_weight.loc[train_index]; sub_test_weight = train_weight.loc[test_index]
+            sub_train = train.iloc[train_index]; sub_test = train.iloc[test_index]
+            sub_train_label = train_label.iloc[train_index]; sub_test_label = train_label.iloc[test_index]
+            if train_weight is not None:
+                sub_train_weight = train_weight.iloc[train_index]; sub_test_weight = train_weight.iloc[test_index]
+            else:
+                sub_train_weight = None; sub_test_weight = None
 
             models += [self.model_.fit(sub_train, sub_train_label, sub_test, sub_test_label, sub_train_weight, sub_test_weight)]
 
         self.models = models
+        self.ft_names = list(train.columns.values)
+        self.Mperfrm = self.getMperfrm()
         return self
 
     def predict(self, x, y = None):
@@ -169,7 +202,7 @@ class cvModel(BaseEstimator, ClassifierMixin):
                 df = pd.merge(left = df, right = tmp, left_index = True, right_index = True, how = 'outer')
 
 
-        return df.mean(axis = 1)
+        return np.array(df.mean(axis=1))
 
     def getTvalues(self, mtc = None):
         for m in range(len(self.models)):
@@ -188,4 +221,4 @@ class cvModel(BaseEstimator, ClassifierMixin):
         train = pd.DataFrame([a['train'] for a in rlts])
         test = pd.DataFrame([a['test'] for a in rlts])
 
-        return {'train_mean':train.mean().to_dict(), 'test_mean':test.mean().to_dict(), 'train_std':train.std().to_dict(), 'test_std':test.std().to_dict()}
+        return {'train':train.mean().to_dict(), 'test':test.mean().to_dict(), 'train_std':train.std().to_dict(), 'test_std':test.std().to_dict()}

@@ -30,4 +30,4 @@ class featureProcess(AllWoeFuncs, FeatureProcessFuncs):
         5.woe coding for (str or numbers)
         """
 
-    def
+    def spurs.change_info
