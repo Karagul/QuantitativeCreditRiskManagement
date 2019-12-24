@@ -6,7 +6,6 @@ from tqdm import tqdm
 
 import tools
 from WoeMethods import AllWoeFuncs, WoeFuncs
-from FeatureProcess import FeatureProcessFuncs
 import FeatureStatTools 
 
 
@@ -83,7 +82,7 @@ try:
             if type_check[i]['type'] != 'str':
                 #KS计算
                 try:
-                    kses[i] = {'bf':FeatureStatTools.ks_cal_func(df_bf[:], grps=10, ascd = False)['ks'].max(), 'af':FeatureStatTools.ks_cal_func(df_af[:], grps=10, ascd = False)['ks'].max()}
+                    kses[i] = {'bf':FeatureStatTools.ks_cal_func(df_bf[:], grps=10, ascd = False)['ks'].apply(abs).max(), 'af':FeatureStatTools.ks_cal_func(df_af[:], grps=10, ascd = False)['ks'].apply(abs).max()}
                 except:
                     kses[i] = {'bf':None, 'af':None}
             else:

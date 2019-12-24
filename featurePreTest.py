@@ -22,16 +22,16 @@ from FeatureSelection import ModelBasedMethods
 #设置最基本的路径变量
 level1 = False
 level2 = False
-level3 = False
+level3 = True
 level4 = False
-level5 = True
+level5 = False
 path = '.'
 woe_vrs = 'vrs1'
 raw_data_file_name = 'data.csv'
 path = '../function_test/raw_data'
 rnd_seed = 21
 
-type_info = tools.getJson(path + '/typ_info.json')
+type_check = tools.getJson(path + '/typ_info.json')
 raw_data = pd.read_csv(path+'/'+raw_data_file_name, sep = r'[\t,|]', header = 0, dtype = {i:type_check[i]['type'] for i in type_check.keys() if type_check[i]['type'] == 'str'})
 """
 提取之前计算的IV值，为后续评估做准备
@@ -169,9 +169,9 @@ if level3:
         #this takes time, do remember~
         features = sbox._random_select_cor(all_ftrs, 50, musthave = None, corr_c = 0.75, rnd_seed = None)
         sbox.featureStat_model(features, modeltype = 'xgb', rnd_seed = 21)
-        _ = sbox.getTvalues('gain', 'grp_'+str(i))
+        _ = sbox.getTvalues('gain', ifabs = True, name = 'grp_'+str(i))
 
-    rlts = sbox.featureAvgScore(top = 30, ftr_c = 0.55)
+    rlts = sbox.featureSelection_AvgScore(top = 30, ftr_c = 0.55)
     rlts.sort_values('score', ascending =False, inplace = True)
     prm_ftrs = list(rlts.index.values)[:50]
 
@@ -225,9 +225,9 @@ if level5:
         #this takes time, do remember~
         #可以采用多进程优化
         features = sbox._random_select_cor(all_ftrs, 50, musthave = None, corr_c = 0.75, rnd_seed = None)
-        sbox.featureStat_model(prm_ftrs, modeltype = 'cv', rnd_seed = 21)
-        _ = sbox.getTvalues('gain', 'grp_'+str(i))
+        sbox.featureStat_model(features, modeltype = 'cv', rnd_seed = 21)
+        _ = sbox.getTvalues('gain', ifabs = True, name = 'grp_'+str(i))
 
-    rlts = sbox.featureAvgScore(top = 30, ftr_c = 0.5)
+    rlts = sbox.featureSelection_AvgScore(top = 30, ftr_c = 0.5)
     rlts.sort_values('score', ascending =False, inplace = True)
     prm_ftrs = list(rlts.index.values)[:50]

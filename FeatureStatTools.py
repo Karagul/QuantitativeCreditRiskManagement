@@ -233,5 +233,5 @@ def ks_cal_func(df, grps=10, ascd = False, duplicates = 'drop'):
     stat['bad_cumsum_pct'] = stat['bad_cumsum']/df['label'].sum()
     stat['good_cumsum_pct'] = stat['good_cumsum']/(len(df)-df['label'].sum())
 
-    stat['ks'] = stat['bad_cumsum_pct'] - stat['good_cumsum_pct']
+    stat['ks'] = (stat['bad_cumsum_pct'] - stat['good_cumsum_pct'])
     return stat
