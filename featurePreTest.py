@@ -22,8 +22,8 @@ from FeatureSelection import ModelBasedMethods
 #设置最基本的路径变量
 level1 = False
 level2 = False
-level3 = True
-level4 = False
+level3 = False
+level4 = True
 level5 = False
 path = '.'
 woe_vrs = 'vrs1'
@@ -177,8 +177,49 @@ if level3:
 
 if level4:
     #维信方法
-    #需要补充
-    pass
+    #随机筛选的方法，主要用gain进行评估
+    #使用xgboost
+    #feature一般不做特别处理，除非cap
+    #通过随机抽取特征的方式计算
+    #需要留出OOT
+    model_params = {
+    #'booster':'gbtree',
+    'objective': 'binary:logistic', #多分类的问题
+    #'eval_metric': 'auc',
+    #'num_class':10, # 类别数，与 multisoftmax 并用
+    'gamma':0.2,  # 用于控制是否后剪枝的参数,越大越保守，一般0.1、0.2这样子。
+    'max_depth':3, # 构建树的深度，越大越容易过拟合
+    'lambda':1000,  # 控制模型复杂度的权重值的L2正则化项参数，参数越大，模型越不容易过拟合。
+    'subsample':0.7, # 随机采样训练样本
+    'colsample_bytree':0.7, # 生成树时进行的列采样
+    'min_child_weight': 5,
+    # 这个参数默认是 1，是每个叶子里面 h 的和至少是多少，对正负样本不均衡时的 0-1 分类而言
+    #，假设 h 在 0.01 附近，min_child_weight 为 1 意味着叶子节点中最少需要包含 100 个样本。
+    #这个参数非常影响结果，控制叶子节点中二阶导的和的最小值，该参数值越小，越容易 overfitting。
+    'silent':1 ,#设置成1则没有运行信息输出，最好是设置为0.
+    'eta': 0.1, # 如同学习率
+    'seed':1000,
+    'nthread':-1,# cpu 线程数
+    'eval_metric': 'logloss'
+    }
+
+    params = {'params':model_params, 'early_stopping_rounds':10, 'num_rounds':50}
+    data, oot, data_lb, oot_lb = train_test_split(raw_data.drop('label' ,axis = 1), raw_data['label'], test_size = 0.2, random_state = rnd_seed)
+
+    pbox = AllFtrProcess(path+'/feature_process_methods/smy_level1.json',\
+                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree')
+    pbox = pbox.fit(data.assign(label = data_lb))
+    data_m = pbox.transform(data, iflabel = False)
+    oot_m = pbox.transform(oot, iflabel = False)
+
+    all_ftrs = list(data_m.columns.values)
+    corr = data_m.corr()
+    sbox = ModelBasedMethods(data_m, data_lb, list(data_m.columns.values), corr, params, path)
+
+    features = sbox._random_select_cor(all_ftrs, 200, musthave = None, corr_c = 0.75, rnd_seed = None)
+    prm_ftrs = sbox.featureSelection_randomSelect(ftr_names = features, modeltype = 'xgb', importance_type='gain',\
+                                                  threshold1 = 0.02,threshold2=0.01, threshold3=5, keep_rate=0.5, \
+                                                  max_iter=100, min_num = 5, test_size = 0.3)
 
 if level5:
     #使用xgboost并且用cv的方式评估模型

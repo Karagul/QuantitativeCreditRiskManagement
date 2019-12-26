@@ -40,3 +40,12 @@ def putFile(path, file, jsonstr):
     with open(path+'/'+file, 'w', encoding= 'utf-8') as f:
         f.write(json_str)
         f.close()
+
+def card_score(pred, P = 660, Q = 20, PDO = 50, good_weight = 1):
+    """
+    pred:概率（array或者scalar）
+    """
+    Odds = (1-pred)*good_weight/pred
+    B = -PDO/np.log(2)
+    A = P + B*np.log(Q)
+    return A - B*np.log(Odds)

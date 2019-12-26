@@ -22,6 +22,8 @@ class undoMethods(object):
     
     def transform(self, df):
         return df
+    
+    
 
 class fillMethods(object):
     def __init__(self, param):

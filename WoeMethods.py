@@ -109,7 +109,7 @@ class bins_method_funcs(object):
         if ifraise:
             if self.raw[self.ft_name].isna().max() == True:
                 raise ValueError('setStrValue: new value happened!')
-                
+
 
     def _smpSizeCheck_real(self, tmp, prm_cuts, smp_size):
         tmp['grp'] = pd.cut(tmp[self.ft_name], bins = prm_cuts, labels = range(len(prm_cuts)-1), right = False)
@@ -149,7 +149,7 @@ class bins_method_funcs(object):
         strBins = {}
         for i in range(len(values)):
             strBins[values[i]] = i
-        
+
         tmp['grp'] = tmp[self.ft_name].apply(lambda x: strBins[x])
         check = tmp.groupby('grp', as_index = False).agg({'label':['sum', 'count']})
         check.columns = [self.ft_name, 'bad', 'size']
@@ -169,7 +169,7 @@ class bins_method_funcs(object):
 #                strBins[check.loc[loc-1, self.ft_name]] = strBins[check.loc[loc, self.ft_name]]
 #            else:
 #                strBins[check.loc[loc, self.ft_name]] = strBins[check.loc[loc+1, self.ft_name]]
-                
+
             if loc == len(check) - 1:
                 repl = check.loc[loc-1, self.ft_name]
                 tgt = check.loc[loc, self.ft_name]
@@ -182,11 +182,11 @@ class bins_method_funcs(object):
             else:
                 repl = check.loc[loc, self.ft_name]
                 tgt = check.loc[loc+1, self.ft_name]
-                
+
             for k,v in strBins.items():
                 if v == repl:
                     strBins[k] = tgt
-            
+
             #return strBins
             #tmp['grp'] = check[self.ft_name].apply(lambda x: strBins[x])
             tmp = tmp.assign(grp = tmp[self.ft_name].apply(lambda x: strBins[x]))
@@ -332,9 +332,9 @@ class bins_method_funcs(object):
                 #tmp['grp'] = pd.cut(tmp[self.ft_name], bins = cuts, index = range(len(cuts)-1), right = False)
                 tmp = tmp.assign(grp = pd.cut(tmp[self.ft_name], bins = cuts, labels = range(len(cuts)-1), right = False))
                 chis = self._chi_cal_func(tmp)
-    
+
             cuts = self._smpSizeCheck_real(tmp, cuts, smp_size)
-        
+
 
         self.bins = {self.ft_name:cuts}
         self.cap_info = {'max': tmp[self.ft_name].max(), 'min':tmp[self.ft_name].min()}
@@ -377,14 +377,14 @@ class WoeFuncs(bins_method_funcs):
     2.设定目标特征，提供特征及对应的label--class.setTgt()
     3.根据是否是数值型变量，使用class.woe_cal() 或者 class.strWoe_cal()
     """
-    def __init__(self, pct_size = 0.05, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree'):
+    def __init__(self, pct_size = 0.05, max_grps = 5, chiq_pv = 0.05, ifmono = True, keepnan = True, methods = 'tree'):
         super(WoeFuncs, self).__init__(pct_size, max_grps, chiq_pv)
-        self.ifmono = ifmono; self.ifnan = ifnan
+        self.ifmono = ifmono; self.keepnan = keepnan
         self.methods = methods
 
         self.allInvalid = {}
         self.woeDetail = {}
-        
+
     def setTgt(self, df):
         """
         df:必须是一个两列的DataFrame，其中第一列是特征，第二列是label
@@ -401,11 +401,11 @@ class WoeFuncs(bins_method_funcs):
         计算特征的IV值及相应分箱的WOE编码
         1.data：意味着可以传输外部数据进行计算；
         2.ifiv: 控制是否返回最终的IV值；
-        3.ifnan: 控制是否进行空值处理；
+        3.keepnan: 控制是否进行空值处理；
         4.methods: 控制分箱方法，只有‘tree’， ‘chiq’， ‘freq’三种可选；
         """
         methods = self.methods
-        ifnan = self.ifnan
+        keepnan = self.keepnan
 
         if data is None:
             data = self.raw.copy()
@@ -435,7 +435,7 @@ class WoeFuncs(bins_method_funcs):
         tmp['grp'] = pd.cut(tmp[self.ft_name], bins = bins, right = False).apply(str)
         stat = tmp[['grp', 'label']].groupby('grp', as_index = False).agg({'label':['sum', 'count']})
         #是否保留空值当统计
-        if ifnan and len(data[data[self.ft_name].isna()])>0:
+        if keepnan and len(data[data[self.ft_name].isna()])>0:
             rlts = np.array(stat).tolist() + [['nan', data[data[self.ft_name].isna()]['label'].sum(), len(data[data[self.ft_name].isna()])]]
         else:
             rlts = np.array(stat).tolist()
@@ -459,7 +459,7 @@ class WoeFuncs(bins_method_funcs):
         self.iv_stat['woe_info'] = woe
         self.iv_stat['iv_value'] = woe['iv'].sum()
 
-    def strWoe_cal(self, data = None, cuts = None, ifnan = True):
+    def strWoe_cal(self, data = None, cuts = None, keepnan = True):
         """
         对于定性类的特征进行woe计算
         """
@@ -477,12 +477,12 @@ class WoeFuncs(bins_method_funcs):
             tmp = data.copy()
 
         #合并特定类别限制分组数
-        cuts = self._strWoe_merge(tmp, self.ft_name, cuts, self.argms['max_grps'])
+        cuts = self._strWoe_merge(tmp.dropna(), self.ft_name, cuts, self.argms['max_grps'])
         self.setWoeBins({self.ft_name:cuts})
 
         tmp['grp'] = tmp[self.ft_name].apply(lambda x: cuts[x] if x in cuts.keys() else 'nan')
-        if not ifnan:
-            tmp = tmp[tmp[self.ft_name]!='nan']
+        if not keepnan:
+            tmp = tmp[tmp['grp']!='nan']
 
         woe = tmp[['grp', 'label']].groupby('grp', as_index = False).agg({'label':['sum', 'count']})
         woe.columns = [self.ft_name, 'bad', 'size']
@@ -491,13 +491,16 @@ class WoeFuncs(bins_method_funcs):
         woe['woe'] = ((woe['bad']/bad)/(woe['good']/good)).apply(np.log)
         woe['iv'] = (woe['bad']/bad - woe['good']/good) * woe['woe']
         woe['bad_pct'] = woe['bad']/woe['size']
-        
+
         #return woe
 
         tmp_dict = {}
         for k, v in cuts.items():
             tmp_dict[k] = list(woe[woe[self.ft_name]==v]['woe'])[0]
             
+        if 'nan' in list(woe[self.ft_name]):
+            tmp_dict['nan'] = list(woe[woe[self.ft_name]=='nan'])[0]
+
         self.woeDetail[self.ft_name]['bins'] = self.getWoeBins()
         self.woeDetail[self.ft_name]['woes'] = tmp_dict
         self.allInvalid[self.ft_name] = self.getWoeCheck()
@@ -537,14 +540,14 @@ class WoeFuncs(bins_method_funcs):
 
         return org_bins
 
-    def woe_apply(self, data = None, ifnan = False):
+    def woe_apply(self, data = None, keepnan = False):
         """
         用WOE编码替换分组信息
         """
         if data is None:
             data = self.raw.copy()
 
-        if ifnan:
+        if not keepnan:
             data = data.dropna()
 
         try:
@@ -554,7 +557,7 @@ class WoeFuncs(bins_method_funcs):
             self.woe_cal()
             cuts = self.woeDetail[self.ft_name]['bins']
             woe_info = self.woeDetail[self.ft_name]['woes']
-            
+
         up, floor = max(cuts), min(cuts)
 
         data['grp'] = pd.cut(data[self.ft_name].apply(self._llt_cap_func, s = floor, b = up), bins = cuts, right = False).astype(object).apply(str)
@@ -566,14 +569,14 @@ class WoeFuncs(bins_method_funcs):
 
         self.woe_coded_data = data
 
-    def strWoe_apply(self, data = None, ifnan = False):
+    def strWoe_apply(self, data = None, keepnan = False):
         """
         对于定性类特征进行WOE编码替换
         """
         if data is None:
             data = self.raw.copy()
 
-        if ifnan:
+        if keepnan:
             data = data.dropna()
 
         try:
@@ -583,12 +586,12 @@ class WoeFuncs(bins_method_funcs):
             self.strWoe_cal()
             cuts = self.woeDetail[self.ft_name]['bins']
             woe_info = self.woeDetail[self.ft_name]['woes']
-        
+
         try:
             data = data.assign(**{self.ft_name:data[self.ft_name].apply(lambda x: woe_info[x] if x in cuts.keys() else woe_info['nan'])})
         except KeyError:
             raise KeyError('nan value happened in test!')
-            
+
         self.woe_coded_data = data
 
     def getWoeCode(self):
@@ -602,13 +605,13 @@ class WoeFuncs(bins_method_funcs):
 
     def getInvalid(self):
         return {k:v for k, v in self.allInvalid.items() if v is not None}
-    
+
     def freeMmy(self):
         try:
             del self.raw
         except:
             pass
-        
+
         try:
             del self.woe_code_data
         except:
@@ -618,13 +621,13 @@ class AllWoeFuncs(WoeFuncs):
     """docstring for AllWoeFUncs:
        1.check setFtrs and setData functions before any calculation
     """
-    def __init__(self, path, pct_size = 0.05, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree'):
-        super(AllWoeFuncs, self).__init__(pct_size, max_grps, chiq_pv, ifmono, ifnan, methods)
+    def __init__(self, path, pct_size = 0.05, max_grps = 5, chiq_pv = 0.05, ifmono = True, keepnan = True, methods = 'tree'):
+        super(AllWoeFuncs, self).__init__(pct_size, max_grps, chiq_pv, ifmono, keepnan, methods)
         self.path = path
-        
+
     def setData(self, data):
         self.data = data
-        
+
     def setFtrs(self, ftrs):
         """
         this functions is used before any woe calculations
@@ -633,7 +636,7 @@ class AllWoeFuncs(WoeFuncs):
             raise ValueError('Features Not Match !!')
         else:
             self.ftrs = ftrs
-            
+
     def AllWoeCollects(self, woe_vrs_info):
         """
         collect calculated woe infos
@@ -660,13 +663,13 @@ class AllWoeFuncs(WoeFuncs):
                         self._setStrValue(self.ftrs[i], ifraise = False)
                         self.woeDetail[i]['str2orders'] = self.ftrs[i]
                         self.woe_cal()
-        
+
                     ivs[i] = self.getIVinfo()
         except KeyboardInterrupt:
             t.close()
             raise
         t.close()
-        
+
         if vrs is not None:
 
             tools.putFile(self.path+'/feature_process_methods/IVstat','IVs_'+vrs+'.json', ivs)
@@ -680,14 +683,14 @@ class AllWoeFuncs(WoeFuncs):
                 pass
         except:
             raise ValueError('Run func AllWoeCals first')
-        
+
         #参数至少要传输一个label，但并无实际意义
         if 'label' in self.data.columns.values:
             self.data_woe = self.data[['label']]
         else:
             self.data['label'] = 1
             self.data_woe = self.data[['label']]
-        
+
         try:
             with tqdm(self.woeDetail.keys()) as t:
                 for i in t:
@@ -702,7 +705,7 @@ class AllWoeFuncs(WoeFuncs):
                     else:
                         self._setStrValue(strSet, ifraise = False)
                         self.woe_apply()
-        
+
                     self.data_woe = pd.merge(left = self.data_woe, right = self.getWoeCode(), left_index = True, right_index = True, how = 'left')
         except KeyboardInterrupt:
             t.close()

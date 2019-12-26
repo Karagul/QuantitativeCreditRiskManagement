@@ -83,9 +83,11 @@ class ModelBasedMethods(object):
         else:
             rlts = []
         pcr = list(corr.index.values)
+        corr_tmp = corr.copy()
 
         for i in rlts:
-            ops = corr.loc[pcr,i]
+            corr = corr_tmp.loc[pcr,:]
+            ops = corr_tmp.loc[pcr,i]
             pcr = list(ops[ops<corr_c].index.values)
 
         while  len(rlts)<nums and len(pcr)>0:

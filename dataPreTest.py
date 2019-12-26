@@ -63,7 +63,8 @@ try:
             if type_check[i]['type'] != 'str':
                 #t值计算
                 try:
-                    tvs[i] = {'bf':FeatureStatTools.tvalue_cal_func(df_bf[:], ifconst = True), 'af':FeatureStatTools.tvalue_cal_func(df_af[:], ifconst = True)}
+                    tvs[i] = {'bf':FeatureStatTools.tvalue_cal_func(df_bf[:], ifconst = True),\
+                              'af':FeatureStatTools.tvalue_cal_func(df_af[:], ifconst = True)}
                 except:
                     tvs[i] = {'bf':None, 'af':None}
                     
@@ -82,7 +83,8 @@ try:
             if type_check[i]['type'] != 'str':
                 #KS计算
                 try:
-                    kses[i] = {'bf':FeatureStatTools.ks_cal_func(df_bf[:], grps=10, ascd = False)['ks'].apply(abs).max(), 'af':FeatureStatTools.ks_cal_func(df_af[:], grps=10, ascd = False)['ks'].apply(abs).max()}
+                    kses[i] = {'bf':FeatureStatTools.ks_cal_func(df_bf[:], grps=10, ascd = False, duplicates = 'drop')['ks'].apply(abs).max(),\
+                               'af':FeatureStatTools.ks_cal_func(df_af[:], grps=10, ascd = False, duplicates = 'drop')['ks'].apply(abs).max()}
                 except:
                     kses[i] = {'bf':None, 'af':None}
             else:
