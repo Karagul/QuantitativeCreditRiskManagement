@@ -15,11 +15,16 @@ from sklearn import metrics
 from sklearn.externals import joblib
 from sklearn.base import BaseEstimator, ClassifierMixin
 from xgboost import XGBClassifier
+from sklearn.tree import DecisionTreeClassifier
 
 import statsmodels.api as sm
+from copy import copy
 
 import FeatureStatTools as funcs
 import warnings
+
+from FeatureStatTools import ks_cal_func
+
 
 #num_rounds = 500
 
@@ -55,10 +60,17 @@ class xgbModel(BaseEstimator, ClassifierMixin):
             rlt['auc'] = metrics.roc_auc_score(ylabel, ypred)
             rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
             rlt['logloss'] = metrics.log_loss(ylabel, ypred)
+            data_pred = pd.DataFrame(pd.Series(ypred,index = ylabel.index), columns = ['pred'])
+            data_pred = data_pred.assign(label = ylabel)
+            try:
+                rlt['ks'] = ks_cal_func(data_pred, grps=5, ascd = False, duplicates = 'drop')['ks'].max()
+            except:
+                rlt['ks'] = None
         else:
             rlt['auc'] = None
             rlt['apr'] = None
             rlt['logloss'] = None
+            rlt['ks'] = None
         return rlt
 
     def fit(self, train, train_label, test, test_label, train_weight = None, test_weight = None):
@@ -101,9 +113,21 @@ class lrModel(BaseEstimator, ClassifierMixin):
 
     def _model_perform_funcs(self, ylabel, ypred):
         rlt = {}
-        rlt['auc'] = metrics.roc_auc_score(ylabel, ypred)
-        rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
-        rlt['logloss'] = metrics.log_loss(ylabel, ypred)
+        if ylabel is not None and ypred is not None:
+            rlt['auc'] = metrics.roc_auc_score(ylabel, ypred)
+            rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
+            rlt['logloss'] = metrics.log_loss(ylabel, ypred)
+            data_pred = pd.DataFrame(pd.Series(ypred,index = ylabel.index), columns = ['pred'])
+            data_pred = data_pred.assign(label = ylabel)
+            try:
+                rlt['ks'] = ks_cal_func(data_pred, grps=5, ascd = False, duplicates = 'drop')['ks'].max()
+            except:
+                rlt['ks'] = None
+        else:
+            rlt['auc'] = None
+            rlt['apr'] = None
+            rlt['logloss'] = None
+            rlt['ks'] = None
         return rlt
 
     def fit(self, train, train_label, test = None, test_label = None, train_weight = None, test_weight = None):
@@ -127,17 +151,19 @@ class lrModel(BaseEstimator, ClassifierMixin):
                 test=test.fillna(0)
 
         model = sm.Logit(train_label, x).fit()
+        self.model_ = model
         train_pred = model.predict(x)
         if test is not None:
             test_pred = model.predict(x_test)
         else:
             test_pred = None
-        self.model_ = model
         self.Mperfrm = {'train':self._model_perform_funcs(train_label,train_pred), 'test':self._model_perform_funcs(test_label,test_pred)}
 
         return self
 
     def predict(self, x, y = None):
+        if self.ifconst:
+            x = sm.add_constant(x)
         return np.array(self.model_.predict(x))
 
     def getTvalues(self, mtc = None):
@@ -180,7 +206,7 @@ class cvModel(BaseEstimator, ClassifierMixin):
             else:
                 sub_train_weight = None; sub_test_weight = None
 
-            models += [self.model_.fit(sub_train, sub_train_label, sub_test, sub_test_label, sub_train_weight, sub_test_weight)]
+            models += [copy(self.model_.fit(sub_train, sub_train_label, sub_test, sub_test_label, sub_train_weight, sub_test_weight))]
 
         self.models = models
         self.ft_names = list(train.columns.values)
@@ -213,7 +239,8 @@ class cvModel(BaseEstimator, ClassifierMixin):
                 df = pd.merge(left = df, right = tmp, left_index = True, right_index = True, how = 'outer')
 
         df = df.fillna(0)
-        return df.mean(axis = 1)
+        return df
+        #return df.mean(axis = 1)
 
     def getMperfrm(self, train = None, train_label = None, test = None, test_label = None):
         rlts = [m.getMperfrm() for m in self.models]
@@ -222,3 +249,110 @@ class cvModel(BaseEstimator, ClassifierMixin):
         test = pd.DataFrame([a['test'] for a in rlts])
 
         return {'train':train.mean().to_dict(), 'test':test.mean().to_dict(), 'train_std':train.std().to_dict(), 'test_std':test.std().to_dict()}
+
+class trAdaboostMethods(BaseEstimator, ClassifierMixin):
+    def __init__(self, n_estimators = 100, max_depth = 2, min_samples_split = 2, random_state = None):
+        self.n_estimators = n_estimators
+        self.max_depth = 2
+        self.min_samples_split = 2
+        self.random_state = random_state
+    
+    def _calculateP(self, weights):
+        total = weights.sum()
+        return weights / total
+    
+    def _estimator(self, trans_data, trans_label, test_data, p):
+        clf = DecisionTreeClassifier(criterion="gini", max_features="log2", splitter="random", \
+                                     max_depth = self.max_depth, min_samples_split = self.min_samples_split, random_state = self.random_state)
+        clf.fit(trans_data, trans_label, sample_weight=p)
+        return clf.predict(test_data)
+    
+    def _errorRate(self, label_R, label_H, weight):
+        total = np.sum(weight)
+        return np.sum(weight[:, 0] / total * np.abs(label_R - label_H))
+    
+    def _smlSum(self, alist):
+        
+        rlts = alist[0]
+        for i in alist[1:]:
+            rlts += alist[i]
+            
+        return rlts
+    
+    def _model_perform_funcs(self, ylabel, ypred):
+        rlt = {}
+        if ylabel is not None and ypred is not None:
+            rlt['auc'] = metrics.roc_auc_score(ylabel, ypred)
+            rlt['apr'] = metrics.average_precision_score(ylabel, ypred)
+            rlt['logloss'] = metrics.log_loss(ylabel, ypred)
+        else:
+            rlt['auc'] = None
+            rlt['apr'] = None
+            rlt['logloss'] = None
+        return rlt
+    
+    def fit(self, train, train_label, test = None, test_label = None):
+        """
+        a specific indicator is required suggesting sample distribution
+        """
+        h_list = []
+        beta_ts = []
+        s_index = train[train['if_same_dist'] == 1].index
+        d_index = train[train['if_same_dist'] == 0].index
+        train = train.drop('if_same_dist', axis = 1)
+        
+        weights = pd.Series(np.ones([len(train)])/len(train), index = train.index)
+        beta = 1/(1+np.sqrt(2*np.log(len(d_index)/self.n_estimators)))
+        
+        for i in range(self.n_estimators):
+            p = self._calculateP(weights)
+            
+            clf = DecisionTreeClassifier(max_depth = self.max_depth, min_samples_split = self.min_samples_split, random_state = self.random_state)
+            clf.fit(train, train_label, sample_weight=p)
+            pred = pd.Series(clf.predict(train), idnex = train.index)
+            
+            es = self._errorRate(pred.loc[s_index], train_label.loc[s_index], weights.loc[s_index])
+            if es > 0.5:
+                warnings.warn('error rates too high, may not converge!')
+                es = 0.5
+            
+            beta_t = es/(1-es)
+                
+            w_s = weights.loc[s_index] * (pred-train_label).loc[s_index].apply(np.abs).apply(lambda x: np.power(beta_t, (-x)))
+            w_d = weights.loc[d_index] * (pred-train_label).loc[d_index].apply(np.abs).apply(lambda x: np.power(beta,x))
+            weights = pd.concat([w_s, w_d])
+            h_list += [clf]
+            beta_ts += [beta_t]
+            
+        self.models = h_list
+        self.beta_ts = beta_ts
+        
+        return self
+    
+    def predict(self, x, y = None):
+        pred = self._smlSum([-self.models[i].predict(x) * np.log(self.beta_ts[i]) for i in range(np.int(np.ceil(self.n_estimators/2)), self.n_estimators+1)])
+        ctrs = np.sum([-0.5 * np.log(self.beta_ts[i]) for i in range(np.int(np.ceil(self.n_estimators/2)), self.n_estimators+1)])
+            
+        rlts = (pred>=ctrs).apply(np.int)
+        
+        return rlts
+    
+    def getTvalues(self, mtc = None):
+        pass
+
+    def getCoefs(self):
+        pass
+
+    def getMperfrm(self):
+        pass
+            
+            
+                
+            
+                
+        
+        
+        
+        
+    
+    

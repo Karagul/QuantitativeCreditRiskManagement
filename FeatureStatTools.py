@@ -10,6 +10,7 @@ from scipy import stats
 from dateutil.parser import parse
 from pandas.tseries.offsets import MonthBegin, Day, MonthEnd
 import statsmodels.api as sm
+from scipy.stats import chi2_contingency
 import tqdm
 
 import xgboost as xgb
@@ -77,9 +78,9 @@ def ft_type_check(path, output, header = True, size_c = 1000):
         all_data = all_data.replace({'' : None})
     else:
         if header:
-            all_data = pd.read_csv(path, sep = r'[\t,|]', header = 0, engine = 'python')
+            all_data = pd.read_csv(path, sep = ',', header = 0, engine = 'python')
         else:
-            all_data = pd.read_csv(path, sep = r'[\t,|]', header = None, engine = 'python')
+            all_data = pd.read_csv(path, sep = ',', header = None, engine = 'python')
             all_data.columns = ['f'+str(a) for a in list(all_data.columns.values)]
          
 #    with open(path, 'r') as f:
@@ -120,7 +121,7 @@ def ft_type_check(path, output, header = True, size_c = 1000):
     if fsize > size_c:
         nm = 'type_info_sample.json'
     else:
-        nm = 'typ_info.json'
+        nm = 'type_info.json'
         
     
 
@@ -155,6 +156,44 @@ def ft_mis_check(df, tp, grps = 10):
         vl_check[ft_name] = {'type': 'float', 'cvr_rate':1-df[ft_name].isna().mean(), sml_func(tmp, 0):tmp.loc[sml_func(tmp, 0)]/len(df[ft_name]), sml_func(tmp, 1):tmp.loc[sml_func(tmp, 1)]/len(df[ft_name])}
 
     return vl_check
+
+def ft_mis_check2(df, tp, grps = 10):
+    """
+    计算缺失值及简单的分布情况
+    """
+    def sml_func(s, i):
+        try:
+            return s.index[i]
+        except:
+            return None
+    ft_name = df.columns.values[0]
+    vl_check = {}
+    
+    notna_bad=df['label'][df[ft_name].notnull()].sum()
+    notna_good=(df['label'][df[ft_name].notnull()]==0).sum()
+    na_bad=df['label'][df[ft_name].isnull()].sum()
+    na_good=(df['label'][df[ft_name].isnull()]==0).sum()
+    kf_data=np.array([[notna_bad,notna_good],[na_bad,na_good]])
+    if kf_data.min().min()<=5:
+        kf=np.nan
+    else:
+        kf=chi2_contingency(kf_data)[1]
+
+
+    if tp == 'int':
+        vl_check[ft_name] = {'type': 'int', 'cvr_rate':1-df[ft_name].isna().mean(),'kf_p':kf, 'value_0':0,'value_0_pct': (df[ft_name]==0).mean(), 'value_1':1,'value_1_pct':(df[ft_name]==1).mean()}
+    elif tp == 'str':
+        tmp = df[ft_name].value_counts()
+        vl_check[ft_name] = {'type': 'str', 'cvr_rate':1-df[ft_name].isna().mean(),'kf_p':kf, 'value_0':sml_func(tmp, 0),'value_0_pct':tmp.loc[sml_func(tmp, 0)]/len(df[ft_name]), 'value_1':sml_func(tmp, 1),'value_1_pct':tmp.loc[sml_func(tmp, 1)]/len(df[ft_name])}
+    else:
+        #tgt = df[ft_name].dropna()
+        bins = [df[ft_name].min() + i * np.float((df[ft_name].max()-df[ft_name].min()))/grps for i in range(grps)] + [df[ft_name].max()+1]
+        tmp = pd.cut(df[ft_name], bins = bins, right = False).value_counts()
+        tmp.index = [str(a) for a in tmp.index.values]
+        #return tmp
+        vl_check[ft_name] = {'type': 'float', 'cvr_rate':1-df[ft_name].isna().mean(),'kf_p':kf, 'value_0':sml_func(tmp, 0),'value_0_pct':tmp.loc[sml_func(tmp, 0)]/len(df[ft_name]),'value_1': sml_func(tmp, 1),'value_1_pct':tmp.loc[sml_func(tmp, 1)]/len(df[ft_name])}
+
+    return vl_check   
 
 def ft_corr(df):
     """

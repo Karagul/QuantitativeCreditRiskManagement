@@ -71,6 +71,16 @@ class ModelBasedMethods(object):
         if len(tmp) < nums:
             warnings.warn('not enough features for random feature selections')
         return tmp
+    
+    def _corr_filter(self, ftrs, musthave, corr_c = 0.75):
+        corr = self.corr.copy()
+        todrop = []
+        for i in musthave:
+            pc = corr[i][corr[i]>corr_c]
+            todrop += list(pc.index.values)
+            
+        todrop = list(set(todrop))
+        return list(set(ftrs)-set(todrop))
 
     def _random_select_cor(self, ftrs, nums, musthave = None, corr_c = 0.75, rnd_seed = None):
         #随机挑选特征，但要考虑相关性
@@ -108,7 +118,7 @@ class ModelBasedMethods(object):
         rlt['logloss'] = metrics.log_loss(ylabel, ypred)
         return rlt
 
-    def ftr_filter(self, tgt, tgt_c = 0.02, corr_c = 0.75):
+    def ftr_filter(self, tgt, size = None, tgt_c = 0.02, corr_c = 0.75):
         """
         根据特定指标及相关性进行特征选择
         tgt.shape = (n, 1)
@@ -120,7 +130,11 @@ class ModelBasedMethods(object):
         tgt = tgt[tgt>tgt_c]
         lstd_bs = list(tgt.index.values)
         vld = []
-        while len(lstd_bs) >= 1:
+        if size is None:
+            real_size = len(tgt)
+        else:
+            real_size = size
+        while len(lstd_bs) >= 1 and len(vld) < real_size:
             vld += [lstd_bs[0]]
             lstd_bs = lstd_bs[1:]
             corr_check = corr[vld[-1]].loc[lstd_bs]
@@ -217,22 +231,26 @@ class ModelBasedMethods(object):
 
         return rlt
 
-    def modelIprv_oneStep_plus(self, base_ftrs, tgts, modeltype = 'lr', rnd_seed = None, mtrc = 'auc', eval_s = 'train'):
+    def modelIprv_oneStep_plus(self, base_ftrs, tgts, modeltype = 'lr', rnd_seed = None, mtrc = 'auc', eval_s = 'train', test_size = 0):
         """
         可以用多进程优化
         """
-        all_rlts = []
+        all_rlts = {}
+        all_tvls = {}
         for i in tgts:
             print(i)
             try:
-                self.featureStat_model(base_ftrs+[i], modeltype, rnd_seed)
-                all_rlts += [self.model_perform_[eval_s][mtrc]]
-            except np.linalg.LinAlgError:
-                all_rlts += [0]
+                self.featureStat_model(base_ftrs+[i], modeltype, rnd_seed, test_size = test_size)
+                all_rlts[i] = self.model_perform_[eval_s][mtrc]
+                all_tvls[i] = self.model_.getTvalues()[i]
+            #except np.linalg.LinAlgError:
+            except:
+                all_rlts[i] = 0
+                all_tvls[i] = 0
 
-        return {tgts[all_rlts.index(max(all_rlts))]:max(all_rlts)}
+        return all_rlts, all_tvls
 
-    def modelIprv_oneStep_minus(self, base_ftrs, modeltype = 'lr', rnd_seed = None, mtrc = 'auc', eval_s = 'train'):
+    def modelIprv_oneStep_minus(self, base_ftrs, modeltype = 'lr', rnd_seed = None, mtrc = 'auc', eval_s = 'train', test_size = 0):
         """
         可以用多进程优化
         """
@@ -241,7 +259,7 @@ class ModelBasedMethods(object):
             ops = base_ftrs[:]
             ops.remove(i)
             try:
-                self.featureStat_model(ops, modeltype, rnd_seed)
+                self.featureStat_model(ops, modeltype, rnd_seed, test_size = test_size)
                 all_rlts += [self.model_perform_[eval_s][mtrc]]
             except np.linalg.LinAlgError:
                 all_rlts += [0]
@@ -290,7 +308,7 @@ class ModelBasedMethods(object):
                     col = col.drop(subcol[if_drop],errors='ignore')
                 keep_col = subcol[gain > threshold1]
                 other_col = col.drop(keep_col,errors='ignore')
-                subcol = keep_col.append( other_col[np.random.random_sample(len(other_col))<keep_rate])
+                subcol = keep_col.append(other_col[np.random.random_sample(len(other_col))<keep_rate])
             print("迭代:%d,%d个变量被保留,%d个变量确认被删除;\n最高分(%g) 出现在第%d轮"\
                   %(iter_num,len(subcol),if_drop.sum(),self.model_.model_.best_score,\
                     self.model_.model_.best_iteration))

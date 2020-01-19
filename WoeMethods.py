@@ -493,13 +493,12 @@ class WoeFuncs(bins_method_funcs):
         woe['bad_pct'] = woe['bad']/woe['size']
 
         #return woe
-
         tmp_dict = {}
         for k, v in cuts.items():
             tmp_dict[k] = list(woe[woe[self.ft_name]==v]['woe'])[0]
             
         if 'nan' in list(woe[self.ft_name]):
-            tmp_dict['nan'] = list(woe[woe[self.ft_name]=='nan'])[0]
+            tmp_dict['nan'] = list(woe[woe[self.ft_name]=='nan']['woe'])[0]
 
         self.woeDetail[self.ft_name]['bins'] = self.getWoeBins()
         self.woeDetail[self.ft_name]['woes'] = tmp_dict
@@ -540,7 +539,7 @@ class WoeFuncs(bins_method_funcs):
 
         return org_bins
 
-    def woe_apply(self, data = None, keepnan = False):
+    def woe_apply(self, data = None, keepnan = True):
         """
         用WOE编码替换分组信息
         """
@@ -569,7 +568,7 @@ class WoeFuncs(bins_method_funcs):
 
         self.woe_coded_data = data
 
-    def strWoe_apply(self, data = None, keepnan = False):
+    def strWoe_apply(self, data = None, keepnan = True):
         """
         对于定性类特征进行WOE编码替换
         """

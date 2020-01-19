@@ -31,7 +31,7 @@ raw_data_file_name = 'data.csv'
 path = '../function_test/raw_data'
 rnd_seed = 21
 
-type_check = tools.getJson(path + '/typ_info.json')
+type_check = tools.getJson(path + '/type_info.json')
 raw_data = pd.read_csv(path+'/'+raw_data_file_name, sep = r'[\t,|]', header = 0, dtype = {i:type_check[i]['type'] for i in type_check.keys() if type_check[i]['type'] == 'str'})
 """
 提取之前计算的IV值，为后续评估做准备
@@ -65,7 +65,7 @@ if level1:
     params= {'ifconst':True, 'ifnull':True}
 
     pbox = AllFtrProcess(path+'/feature_process_methods/smy_level1.json',\
-                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree')
+                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, keepnan = True, methods = 'tree')
     pbox = pbox.fit(data.assign(label = data_lb))
     data_m = pbox.transform(data, iflabel = False)
     oot_m = pbox.transform(oot, iflabel = False)
@@ -99,7 +99,7 @@ if level2:
     data, oot, data_lb, oot_lb = train_test_split(raw_data.drop('label' ,axis = 1), raw_data['label'], test_size = 0.2, random_state = rnd_seed)
 
     pbox = AllFtrProcess(path+'/feature_process_methods/smy_level1.json',\
-                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree')
+                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, keepnan = True, methods = 'tree')
     pbox = pbox.fit(data.assign(label = data_lb))
     data_m = pbox.transform(data, iflabel = False)
     oot_m = pbox.transform(oot, iflabel = False)
@@ -155,7 +155,7 @@ if level3:
     data, oot, data_lb, oot_lb = train_test_split(raw_data.drop('label' ,axis = 1), raw_data['label'], test_size = 0.2, random_state = rnd_seed)
 
     pbox = AllFtrProcess(path+'/feature_process_methods/smy_level1.json',\
-                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree')
+                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, keepnan = True, methods = 'tree')
     pbox = pbox.fit(data.assign(label = data_lb))
     data_m = pbox.transform(data, iflabel = False)
     oot_m = pbox.transform(oot, iflabel = False)
@@ -207,7 +207,7 @@ if level4:
     data, oot, data_lb, oot_lb = train_test_split(raw_data.drop('label' ,axis = 1), raw_data['label'], test_size = 0.2, random_state = rnd_seed)
 
     pbox = AllFtrProcess(path+'/feature_process_methods/smy_level1.json',\
-                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree')
+                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, keepnan = True, methods = 'tree')
     pbox = pbox.fit(data.assign(label = data_lb))
     data_m = pbox.transform(data, iflabel = False)
     oot_m = pbox.transform(oot, iflabel = False)
@@ -218,7 +218,7 @@ if level4:
 
     features = sbox._random_select_cor(all_ftrs, 200, musthave = None, corr_c = 0.75, rnd_seed = None)
     prm_ftrs = sbox.featureSelection_randomSelect(ftr_names = features, modeltype = 'xgb', importance_type='gain',\
-                                                  threshold1 = 0.02,threshold2=0.01, threshold3=5, keep_rate=0.5, \
+                                                  threshold1 = 0.02,threshold2=0.01, threshold3=1, keep_rate=0.5, \
                                                   max_iter=100, min_num = 5, test_size = 0.3)
 
 if level5:
@@ -251,7 +251,7 @@ if level5:
     params = {'modeltype':'xgb', 'params':xgb_params, 'kfold':5}
 
     pbox = AllFtrProcess(path+'/feature_process_methods/smy_level1.json',\
-                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, ifnan = True, methods = 'tree')
+                         pct_size = 0.03, max_grps = 5, chiq_pv = 0.05, ifmono = True, keepnan = True, methods = 'tree')
     data = raw_data.drop('label', axis = 1)
     data_lb = raw_data['label']
     pbox = pbox.fit(data.assign(label = data_lb))
